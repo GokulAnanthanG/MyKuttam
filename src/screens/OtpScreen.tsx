@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { AuthLayout } from '../components/AuthLayout';
+import { AuthSimpleLayout } from '../components/AuthSimpleLayout';
 import { AppTextInput } from '../components/AppTextInput';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { TextLink } from '../components/TextLink';
@@ -56,12 +56,9 @@ export const OtpScreen = ({ navigation, route }: Props) => {
   };
 
   return (
-    <AuthLayout
+    <AuthSimpleLayout
       title="Verify your number"
-      subtitle="We’ll text you a one time password to secure your registration."
-      footer={
-        <TextLink label="Back to login" onPress={() => navigation.goBack()} />
-      }>
+      subtitle="We'll text you a one time password to secure your registration.">
       <View style={styles.content}>
         <View style={styles.progress}>
           <Text style={styles.step}>Step 1 of 2</Text>
@@ -99,8 +96,11 @@ export const OtpScreen = ({ navigation, route }: Props) => {
             />
           </View>
         ) : null}
+        <View style={styles.footerLinks}>
+          <TextLink label="Back to login" onPress={() => navigation.goBack()} />
+        </View>
       </View>
-    </AuthLayout>
+    </AuthSimpleLayout>
   );
 };
 
@@ -135,6 +135,10 @@ const styles = StyleSheet.create({
     fontFamily: fonts.heading,
     color: colors.text,
     marginBottom: 8,
+  },
+  footerLinks: {
+    marginTop: 20,
+    alignItems: 'center',
   },
 });
 

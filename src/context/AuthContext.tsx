@@ -7,7 +7,7 @@ import {
 } from 'react';
 import Toast from 'react-native-toast-message';
 import { AuthService } from '../services/auth';
-import { saveUserToRealm, getStoredUser } from '../storage/userRealm';
+import { saveUserToRealm, getStoredUser, getStoredToken } from '../storage/userRealm';
 import { StoredUser } from '../types/user';
 
 type AuthContextType = {
@@ -17,6 +17,10 @@ type AuthContextType = {
   login: (phone: string, password: string) => Promise<boolean>;
   requestOtp: (phone: string) => Promise<boolean>;
   register: (user: StoredUser, otp: string) => Promise<boolean>;
+  updateProfile: (updates: Partial<Pick<StoredUser, 'name' | 'dob' | 'father_name' | 'address' | 'avatar'>> & { avatarFile?: { uri: string; type: string; name: string } }) => Promise<boolean>;
+  resetPassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
+  forgotPasswordRequestOtp: (phone: string) => Promise<boolean>;
+  forgotPasswordReset: (phone: string, otp: string, newPassword: string) => Promise<boolean>;
   currentUser: StoredUser | null;
   logout: () => Promise<void>;
 };
@@ -44,12 +48,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [initializing, setInitializing] = useState(true);
   const [currentUser, setCurrentUser] = useState<StoredUser | null>(null);
 
-  // Load user from Realm on mount
+  // Load user from Realm on mount for offline support
+  // This allows the app to work offline with cached user data
   useEffect(() => {
     const loadStoredUser = async () => {
       try {
         const { user, token } = await getStoredUser();
         // Only set user if both user and token exist
+        // This enables offline access to user profile and authenticated features
         if (user && token && token.length > 0) {
           setCurrentUser(user);
         }
@@ -88,7 +94,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setLoading(true);
       const result = await AuthService.login({ phone, password });
       if (result.success && result.user && result.token) {
-        // Save user and token to Realm
+        // Save user and token to Realm for offline access
+        // This allows the app to work offline after initial login
         await saveUserToRealm(result.user, result.token);
         setCurrentUser(result.user);
         showSuccess(result.message || 'Login successful!');
@@ -96,7 +103,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
       return false;
     } catch (error) {
-      showError(error);
+      // On network error, check if we have cached credentials
+      // Note: Login requires network, but we can show cached user if available
+      const cached = await getStoredUser();
+      if (cached.user && cached.token) {
+        // If we have cached data, we can still use it for offline mode
+        // But login itself requires network, so we show error
+        showError('Network error. Please check your connection and try again.');
+      } else {
+        showError(error);
+      }
       return false;
     } finally {
       setLoading(false);
@@ -121,11 +137,112 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       setLoading(true);
       const result = await AuthService.register({ user, OTP: otp });
-      if (result.user) {
-        // Save user and token (if provided) to Realm
+      if (result.success && result.user && result.token) {
+        // Save user and token to Realm for offline access and session persistence
         await saveUserToRealm(result.user, result.token);
         setCurrentUser(result.user);
-        showSuccess('Registration complete!');
+        showSuccess(result.message || 'Registration successful!');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const updateProfile = async (
+    updates: Partial<Pick<StoredUser, 'name' | 'dob' | 'father_name' | 'address' | 'avatar'>> & { avatarFile?: { uri: string; type: string; name: string } },
+  ): Promise<boolean> => {
+    try {
+      setLoading(true);
+      const token = await getStoredToken();
+      if (!token) {
+        showError('Authentication token not found. Please login again.');
+        return false;
+      }
+
+      const result = await AuthService.updateProfile(token, updates);
+      if (result.success && result.user) {
+        // Save updated user to Realm
+        await saveUserToRealm(result.user, token);
+        setCurrentUser(result.user);
+        showSuccess(result.message || 'Profile updated successfully!');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const resetPassword = async (
+    currentPassword: string,
+    newPassword: string,
+  ): Promise<boolean> => {
+    try {
+      setLoading(true);
+      const token = await getStoredToken();
+      if (!token) {
+        showError('Authentication token not found. Please login again.');
+        return false;
+      }
+
+      const result = await AuthService.resetPassword(token, {
+        currentPassword,
+        newPassword,
+      });
+
+      if (result.success) {
+        showSuccess(result.message || 'Password reset successfully!');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const forgotPasswordRequestOtp = async (phone: string): Promise<boolean> => {
+    try {
+      setLoading(true);
+      const result = await AuthService.forgotPasswordRequestOtp({ phone });
+      if (result.success) {
+        showSuccess(result.message || 'OTP sent to your phone.');
+        return true;
+      }
+      return false;
+    } catch (error) {
+      showError(error);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const forgotPasswordReset = async (
+    phone: string,
+    otp: string,
+    newPassword: string,
+  ): Promise<boolean> => {
+    try {
+      setLoading(true);
+      const result = await AuthService.forgotPasswordReset({
+        phone,
+        OTP: otp,
+        newPassword,
+      });
+
+      if (result.success) {
+        showSuccess(result.message || 'Password reset successfully!');
         return true;
       }
       return false;
@@ -152,6 +269,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         login,
         requestOtp,
         register,
+        updateProfile,
+        resetPassword,
+        forgotPasswordRequestOtp,
+        forgotPasswordReset,
         currentUser,
         logout,
       }}>

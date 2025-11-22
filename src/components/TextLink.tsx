@@ -15,11 +15,11 @@ export const TextLink = ({ label, onPress }: Props) => (
 
 const styles = StyleSheet.create({
   text: {
-    fontFamily: fonts.heading,
+    fontFamily: fonts.body,
     color: colors.primary,
     fontSize: 14,
     textAlign: 'center',
-    marginVertical: 8,
+    fontWeight: '500',
   },
 });
 

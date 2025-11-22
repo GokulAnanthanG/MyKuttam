@@ -18,6 +18,14 @@ export const endpoints = {
   login: `${BASE_URL}/api/registration/login`,
   sendOtp: `${BASE_URL}/api/registration/before-register`,
   register: `${BASE_URL}/api/registration/register`,
+  updateProfile: `${BASE_URL}/api/user/update-profile`,
+  resetPassword: `${BASE_URL}/api/user/reset-password`,
+  forgotPasswordRequestOtp: `${BASE_URL}/api/registration/forgot-password/request-otp`,
+  forgotPasswordReset: `${BASE_URL}/api/registration/forgot-password/reset`,
+  gallery: `${BASE_URL}/api/gallery`,
+  updateGalleryStatus: (id: string) => `${BASE_URL}/api/gallery/${id}/status`,
+  deleteGalleryImage: (id: string) => `${BASE_URL}/api/gallery/${id}`,
+  uploadGalleryImage: `${BASE_URL}/api/gallery/upload`,
 };
 
 export const ENV = Config?.ENV || 'development';

@@ -17,21 +17,19 @@ type Props = {
   title: string;
   subtitle?: string;
   children: ReactNode;
-  footer?: ReactNode;
   headerAccessory?: ReactNode;
   contentStyle?: ViewStyle;
 };
 
-export const AuthLayout = ({
+export const AuthScrollLayout = ({
   title,
   subtitle,
   children,
-  footer,
   headerAccessory,
   contentStyle,
 }: Props) => {
   const insets = useSafeAreaInsets();
-  
+
   return (
     <View style={styles.container}>
       <StatusBar
@@ -44,35 +42,27 @@ export const AuthLayout = ({
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}>
-          <View style={styles.contentWrapper}>
-            <ScrollView
-              contentContainerStyle={[
-                styles.scrollContent,
-                footer
-                  ? { paddingBottom: 20 }
-                  : { paddingBottom: 40 + insets.bottom },
-              ]}
-              keyboardShouldPersistTaps="handled"
-              showsVerticalScrollIndicator={false}
-              bounces={false}
-              contentInsetAdjustmentBehavior="automatic">
-              <View style={styles.header}>
-                <View style={styles.titles}>
-                  <Text style={styles.title}>{title}</Text>
-                  {subtitle ? (
-                    <Text style={styles.subtitle}>{subtitle}</Text>
-                  ) : null}
-                </View>
-                {headerAccessory}
+          <ScrollView
+            style={styles.scrollView}
+            contentContainerStyle={[
+              styles.scrollContent,
+              { paddingBottom: 40 + insets.bottom },
+            ]}
+            keyboardShouldPersistTaps="handled"
+            showsVerticalScrollIndicator={false}
+            bounces={false}
+            contentInsetAdjustmentBehavior="automatic">
+            <View style={styles.header}>
+              <View style={styles.titles}>
+                <Text style={styles.title}>{title}</Text>
+                {subtitle ? (
+                  <Text style={styles.subtitle}>{subtitle}</Text>
+                ) : null}
               </View>
-              <View style={[styles.card, contentStyle]}>{children}</View>
-            </ScrollView>
-            {footer ? (
-              <View style={[styles.footer, { paddingBottom: insets.bottom }]}>
-                {footer}
-              </View>
-            ) : null}
-          </View>
+              {headerAccessory}
+            </View>
+            <View style={[styles.card, contentStyle]}>{children}</View>
+          </ScrollView>
         </KeyboardAvoidingView>
       </SafeAreaView>
     </View>
@@ -90,14 +80,14 @@ const styles = StyleSheet.create({
   keyboardView: {
     flex: 1,
   },
-  contentWrapper: {
+  scrollView: {
     flex: 1,
   },
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 20,
     paddingTop: 20,
-    paddingBottom: 20,
+    minHeight: '100%',
   },
   header: {
     flexDirection: 'row',
@@ -135,14 +125,5 @@ const styles = StyleSheet.create({
     shadowOffset: { width: 0, height: 2 },
     elevation: 2,
   },
-  footer: {
-    paddingHorizontal: 20,
-    paddingTop: 16,
-    paddingBottom: 8,
-    alignItems: 'center',
-    backgroundColor: colors.background,
-    borderTopWidth: 0,
-  },
 });
-
 

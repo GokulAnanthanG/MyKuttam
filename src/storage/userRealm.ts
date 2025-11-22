@@ -1,3 +1,17 @@
+/**
+ * Realm Storage for User Data (Offline Support)
+ * 
+ * This module stores user authentication and profile data locally using Realm.
+ * This enables offline functionality:
+ * - Auto-login on app restart (no network required)
+ * - View user profile when offline
+ * - Access cached user data for authenticated features
+ * 
+ * Stored Data:
+ * - User profile: name, phone, role, account_type, dob, avatar, father_name, address, status, report_count
+ * - Authentication token: for API requests when online
+ * - Timestamps: createdAt, updatedAt for data freshness tracking
+ */
 import Realm from 'realm';
 import type { StoredUser } from '../types/user';
 

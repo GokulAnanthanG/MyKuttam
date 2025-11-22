@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { AuthLayout } from '../components/AuthLayout';
+import { AuthSimpleLayout } from '../components/AuthSimpleLayout';
 import { AppTextInput } from '../components/AppTextInput';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { TextLink } from '../components/TextLink';
@@ -34,15 +34,9 @@ export const LoginScreen = ({ navigation }: Props) => {
   };
 
   return (
-    <AuthLayout
+    <AuthSimpleLayout
       title="Welcome back"
-      subtitle="Access your community dashboard with your registered phone number."
-      footer={
-        <TextLink
-          label="Need an account? Tap to begin registration"
-          onPress={() => navigation.navigate('Otp', {})}
-        />
-      }>
+      subtitle="Access your community dashboard with your registered phone number.">
       <View style={styles.form}>
         <View style={styles.greeting}>
           <Text style={styles.hero}>MyKuttam</Text>
@@ -71,8 +65,19 @@ export const LoginScreen = ({ navigation }: Props) => {
           loading={loading}
           disabled={!isValid || loading}
         />
+        <View style={styles.linksContainer}>
+          <TextLink
+            label="Forgot password?"
+            onPress={() => navigation.navigate('ForgotPassword')}
+          />
+          <Text style={styles.separator}>•</Text>
+          <TextLink
+            label="Create account"
+            onPress={() => navigation.navigate('Otp', {})}
+          />
+        </View>
       </View>
-    </AuthLayout>
+    </AuthSimpleLayout>
   );
 };
 
@@ -92,6 +97,17 @@ const styles = StyleSheet.create({
     fontFamily: fonts.light,
     color: colors.textMuted,
     marginTop: 4,
+  },
+  linksContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  separator: {
+    color: colors.textMuted,
+    fontSize: 14,
+    fontFamily: fonts.body,
   },
 });
 

@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import React from 'react';
 import { ActivityIndicator, View, StyleSheet } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../context/AuthContext';
 import { LoginScreen } from '../screens/LoginScreen';
 import { OtpScreen } from '../screens/OtpScreen';
 import { RegistrationScreen } from '../screens/RegistrationScreen';
+import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { BottomTabNavigator } from './BottomTabNavigator';
 import { colors } from '../theme/colors';
 
@@ -12,6 +13,7 @@ export type RootStackParamList = {
   Login: undefined;
   Otp: { initialPhone?: string };
   Register: { phone: string; otp: string };
+  ForgotPassword: undefined;
   MainTabs: undefined;
 };
 
@@ -19,16 +21,8 @@ const Stack = createNativeStackNavigator<RootStackParamList>();
 
 export const AppNavigator = () => {
   const { isAuthenticated, initializing } = useAuth();
-  const [initialRoute, setInitialRoute] = useState<'Login' | 'MainTabs'>(
-    'Login',
-  );
 
-  useEffect(() => {
-    if (!initializing) {
-      setInitialRoute(isAuthenticated ? 'MainTabs' : 'Login');
-    }
-  }, [isAuthenticated, initializing]);
-
+  // Show loading screen while checking for stored session
   if (initializing) {
     return (
       <View style={styles.loadingContainer}>
@@ -36,6 +30,12 @@ export const AppNavigator = () => {
       </View>
     );
   }
+
+  // Determine initial route based on authentication status
+  // If user and token exist in Realm, navigate directly to MainTabs (Home)
+  const initialRoute: 'Login' | 'MainTabs' = isAuthenticated
+    ? 'MainTabs'
+    : 'Login';
 
   return (
     <Stack.Navigator
@@ -47,6 +47,7 @@ export const AppNavigator = () => {
       <Stack.Screen name="Login" component={LoginScreen} />
       <Stack.Screen name="Otp" component={OtpScreen} />
       <Stack.Screen name="Register" component={RegistrationScreen} />
+      <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
       <Stack.Screen name="MainTabs" component={BottomTabNavigator} />
     </Stack.Navigator>
   );

@@ -1,11 +1,12 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import Icon from 'react-native-vector-icons/FontAwesome';
 import { HomeScreen } from '../screens/HomeScreen';
 import { DonationScreen } from '../screens/DonationScreen';
 import { GalleryScreen } from '../screens/GalleryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
-import { Text, View, StyleSheet } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 
 export type BottomTabParamList = {
   Home: undefined;
@@ -18,19 +19,18 @@ const Tab = createBottomTabNavigator<BottomTabParamList>();
 
 const TabIcon = ({
   focused,
-  icon,
+  iconName,
 }: {
   focused: boolean;
-  icon: string;
+  iconName: string;
 }) => (
   <View style={[styles.iconContainer, focused && styles.iconContainerFocused]}>
-    <Text
-      style={[
-        styles.icon,
-        focused ? styles.iconFocused : styles.iconInactive,
-      ]}>
-      {icon}
-    </Text>
+    <Icon
+      name={iconName}
+      size={16}
+      color={focused ? colors.primary : colors.text}
+      style={[styles.icon, !focused && styles.iconInactive]}
+    />
   </View>
 );
 
@@ -40,7 +40,7 @@ export const BottomTabNavigator = () => {
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: colors.primary,
-        tabBarInactiveTintColor: colors.textMuted,
+        tabBarInactiveTintColor: colors.text,
         tabBarStyle: {
           backgroundColor: colors.card,
           borderTopWidth: 1,
@@ -65,7 +65,7 @@ export const BottomTabNavigator = () => {
         component={HomeScreen}
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
-            <TabIcon focused={focused} icon="🏠" />
+            <TabIcon focused={focused} iconName="home" />
           ),
         }}
       />
@@ -74,7 +74,7 @@ export const BottomTabNavigator = () => {
         component={DonationScreen}
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
-            <TabIcon focused={focused} icon="💰" />
+            <TabIcon focused={focused} iconName="money" />
           ),
         }}
       />
@@ -83,7 +83,7 @@ export const BottomTabNavigator = () => {
         component={GalleryScreen}
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
-            <TabIcon focused={focused} icon="🖼️" />
+            <TabIcon focused={focused} iconName="image" />
           ),
         }}
       />
@@ -92,7 +92,7 @@ export const BottomTabNavigator = () => {
         component={ProfileScreen}
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
-            <TabIcon focused={focused} icon="👤" />
+            <TabIcon focused={focused} iconName="user" />
           ),
         }}
       />
@@ -102,9 +102,7 @@ export const BottomTabNavigator = () => {
 
 const styles = StyleSheet.create({
   iconContainer: {
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    borderRadius: 12,
+     borderRadius: 12,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -112,13 +110,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardMuted,
   },
   icon: {
-    fontSize: 24,
-  },
-  iconFocused: {
-    opacity: 1,
+    // Icon styling is handled by the Icon component props
   },
   iconInactive: {
-    opacity: 0.5,
+    opacity: 0.6,
   },
 });
 

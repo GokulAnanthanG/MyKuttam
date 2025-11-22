@@ -1,11 +1,12 @@
 import { useMemo, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { StyleSheet, Text, View, Pressable, Platform } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import Icon from 'react-native-vector-icons/FontAwesome';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { AuthLayout } from '../components/AuthLayout';
+import { AuthSimpleLayout } from '../components/AuthSimpleLayout';
 import { AppTextInput } from '../components/AppTextInput';
 import { PrimaryButton } from '../components/PrimaryButton';
-import { TextLink } from '../components/TextLink';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { AccountType, StoredUser, UserRole } from '../types/user';
@@ -17,24 +18,23 @@ type FormState = {
   name: string;
   password: string;
   confirmPassword: string;
-  dob?: string;
+  dob?: Date;
   father_name?: string;
   address?: string;
   account_type: AccountType;
   role: UserRole;
 };
 
-const roles: UserRole[] = ['USER', 'DONATION_MANAGER', 'HELPHER'];
-const accountTypes: AccountType[] = ['COMMON', 'MANAGEMENT'];
 
 export const RegistrationScreen = ({ navigation, route }: Props) => {
   const { loading, register } = useAuth();
   const { phone, otp } = route.params;
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [form, setForm] = useState<FormState>({
     name: '',
     password: '',
     confirmPassword: '',
-    dob: '',
+    dob: undefined,
     father_name: '',
     address: '',
     account_type: 'COMMON',
@@ -56,12 +56,23 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
     }));
   };
 
-  const handleSelect = (key: 'account_type' | 'role', value: string) => {
-    setForm(prev => ({
-      ...prev,
-      [key]: value,
-    }));
+  const formatDate = (date?: Date) => {
+    if (!date) return '';
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    });
   };
+
+  const formatDateForAPI = (date?: Date) => {
+    if (!date) return undefined;
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
+
 
   const handleSubmit = async () => {
     if (!isValid || loading) {
@@ -74,7 +85,7 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
       password: form.password.trim(),
       account_type: form.account_type,
       role: form.role,
-      dob: form.dob ? form.dob.trim() : undefined,
+      dob: formatDateForAPI(form.dob),
       father_name: form.father_name ? form.father_name.trim() : undefined,
       address: form.address ? form.address.trim() : undefined,
     };
@@ -86,12 +97,9 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
   };
 
   return (
-    <AuthLayout
-      title="Complete signup"
-      subtitle={`OTP ${otp} verified for ${phone}. Fill in your details to join the community.`}
-      footer={
-        <TextLink label="Need to edit OTP?" onPress={() => navigation.goBack()} />
-      }>
+    <AuthSimpleLayout
+      title="Complete Registration"
+      subtitle={`OTP verified for ${phone}. Please fill in your details to complete your registration.`}>
       <View style={styles.form}>
         <AppTextInput
           label="Full name"
@@ -99,94 +107,69 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
           value={form.name}
           onChangeText={value => handleChange('name', value)}
         />
-        <View style={styles.row}>
-          <View style={styles.half}>
-            <AppTextInput
-              label="Date of birth"
-              placeholder="YYYY-MM-DD"
-              value={form.dob}
-              onChangeText={value => handleChange('dob', value)}
-            />
+        <View style={styles.datePickerWrapper}>
+          <View style={styles.labelContainer}>
+            <Icon name="calendar" size={14} color={colors.textMuted} />
+            <Text style={styles.label}>Date of Birth (Optional)</Text>
           </View>
-          <View style={styles.half}>
-            <AppTextInput
-              label="Father's name"
-              placeholder="Optional"
-              value={form.father_name}
-              onChangeText={value => handleChange('father_name', value)}
+          <Pressable
+            style={styles.datePickerButton}
+            onPress={() => setShowDatePicker(true)}>
+            <Text
+              style={[
+                styles.datePickerText,
+                !form.dob && styles.datePickerPlaceholder,
+              ]}>
+              {form.dob ? formatDate(form.dob) : 'Select date of birth'}
+            </Text>
+            <Icon name="chevron-down" size={16} color={colors.primary} />
+          </Pressable>
+          {showDatePicker && (
+            <DateTimePicker
+              value={form.dob || new Date()}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'spinner' : 'default'}
+              onChange={(event, selectedDate) => {
+                setShowDatePicker(Platform.OS === 'ios');
+                if (selectedDate) {
+                  setForm({ ...form, dob: selectedDate });
+                }
+              }}
+              maximumDate={new Date()}
             />
-          </View>
+          )}
         </View>
         <AppTextInput
+          label="Father's Name"
+          placeholder="Enter father's name"
+          value={form.father_name}
+          onChangeText={value => handleChange('father_name', value)}
+        />
+        <AppTextInput
           label="Address"
-          placeholder="Street, City, State"
+          placeholder="Street, City, State (Optional)"
           value={form.address}
           onChangeText={value => handleChange('address', value)}
+          multiline
+          numberOfLines={3}
         />
-        <View style={styles.row}>
-          <View style={styles.half}>
-            <AppTextInput
-              label="Password"
-              placeholder="••••••••"
-              secureTextEntry
-              value={form.password}
-              onChangeText={value => handleChange('password', value)}
-            />
-          </View>
-          <View style={styles.half}>
-            <AppTextInput
-              label="Confirm password"
-              placeholder="••••••••"
-              secureTextEntry
-              value={form.confirmPassword}
-              onChangeText={value => handleChange('confirmPassword', value)}
-            />
-          </View>
-        </View>
-        <View style={styles.selectorBlock}>
-          <Text style={styles.selectorLabel}>Account type</Text>
-          <View style={styles.selectorRow}>
-            {accountTypes.map(type => (
-              <Pressable
-                key={type}
-                style={[
-                  styles.chip,
-                  form.account_type === type && styles.chipActive,
-                ]}
-                onPress={() => handleSelect('account_type', type)}>
-                <Text
-                  style={[
-                    styles.chipText,
-                    form.account_type === type && styles.chipTextActive,
-                  ]}>
-                  {type}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
-        <View style={styles.selectorBlock}>
-          <Text style={styles.selectorLabel}>Role</Text>
-          <View style={styles.selectorRow}>
-            {roles.map(role => (
-              <Pressable
-                key={role}
-                style={[
-                  styles.chipSmall,
-                  form.role === role && styles.chipActive,
-                ]}
-                onPress={() => handleSelect('role', role)}>
-                <Text
-                  style={[
-                    styles.chipTextSmall,
-                    form.role === role && styles.chipTextActive,
-                  ]}>
-                  {role}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
+        <AppTextInput
+          label="Password"
+          placeholder="Enter password (min 6 characters)"
+          secureTextEntry
+          value={form.password}
+          onChangeText={value => handleChange('password', value)}
+        />
+        <AppTextInput
+          label="Confirm Password"
+          placeholder="Re-enter password"
+          secureTextEntry
+          value={form.confirmPassword}
+          onChangeText={value => handleChange('confirmPassword', value)}
+        />
+        {form.password !== form.confirmPassword && form.confirmPassword.length > 0 && (
+          <Text style={styles.errorText}>Passwords do not match</Text>
+        )}
         <PrimaryButton
           label="Create my account"
           onPress={handleSubmit}
@@ -194,65 +177,56 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
           disabled={!isValid || loading}
         />
       </View>
-    </AuthLayout>
+    </AuthSimpleLayout>
   );
 };
 
 const styles = StyleSheet.create({
   form: {
-    gap: 12,
-  },
-  row: {
-    flexDirection: 'row',
-    gap: 12,
-  },
-  half: {
-    flex: 1,
-  },
-  selectorBlock: {
-    marginTop: 8,
-  },
-  selectorLabel: {
-    fontFamily: fonts.heading,
-    color: colors.text,
-    marginBottom: 8,
-  },
-  selectorRow: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
     gap: 8,
   },
-  chip: {
-    paddingVertical: 12,
-    paddingHorizontal: 18,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.cardMuted,
-  },
-  chipSmall: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 999,
-    borderWidth: 1,
-    borderColor: colors.border,
-    backgroundColor: colors.cardMuted,
-  },
-  chipActive: {
-    borderColor: colors.primary,
-    backgroundColor: colors.primaryDark,
-  },
-  chipText: {
+  errorText: {
+    color: colors.danger,
     fontFamily: fonts.body,
-    color: colors.textMuted,
+    fontSize: 13,
+    marginTop: -12,
+    marginBottom: 8,
+    marginLeft: 4,
   },
-  chipTextSmall: {
-    fontFamily: fonts.body,
-    color: colors.textMuted,
-    fontSize: 12,
+  datePickerWrapper: {
+    marginBottom: 16,
   },
-  chipTextActive: {
+  labelContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  label: {
     color: colors.text,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  datePickerButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: 18,
+    paddingVertical: 14,
+    backgroundColor: colors.card,
+  },
+  datePickerText: {
+    color: colors.text,
+    fontFamily: fonts.body,
+    fontSize: 16,
+    flex: 1,
+  },
+  datePickerPlaceholder: {
+    color: colors.textMuted,
   },
 });
 
