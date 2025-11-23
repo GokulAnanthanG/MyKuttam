@@ -26,6 +26,19 @@ export const endpoints = {
   updateGalleryStatus: (id: string) => `${BASE_URL}/api/gallery/${id}/status`,
   deleteGalleryImage: (id: string) => `${BASE_URL}/api/gallery/${id}`,
   uploadGalleryImage: `${BASE_URL}/api/gallery/upload`,
+  // News endpoints
+  news: `${BASE_URL}/api/news`,
+  newsById: (id: string) => `${BASE_URL}/api/news/${id}`,
+  newsList: `${BASE_URL}/api/news/list`,
+  newsHighlighted: `${BASE_URL}/api/news/highlighted`,
+  // Comment endpoints
+  comments: `${BASE_URL}/api/comments`,
+  commentById: (id: string) => `${BASE_URL}/api/comments/${id}`,
+  commentsByNews: (newsId: string) => `${BASE_URL}/api/comments/news/${newsId}`,
+  // Like endpoints
+  likes: `${BASE_URL}/api/likes`,
+  likeStatus: `${BASE_URL}/api/likes/status`,
+  likesByNews: (newsId: string) => `${BASE_URL}/api/likes/news/${newsId}`,
 };
 
 export const ENV = Config?.ENV || 'development';

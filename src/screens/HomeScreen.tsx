@@ -1,10 +1,7 @@
 import { useEffect, useRef } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import NetInfo from '@react-native-community/netinfo';
 import Toast from 'react-native-toast-message';
-import { colors } from '../theme/colors';
-import { fonts } from '../theme/typography';
+import { NewsScreen } from './NewsScreen';
 
 export const HomeScreen = () => {
   const hasShownOfflineToast = useRef(false);
@@ -47,37 +44,6 @@ export const HomeScreen = () => {
     };
   }, []);
 
-  return (
-    <SafeAreaView style={styles.container}>
-      <View style={styles.content}>
-        <Text style={styles.title}>Welcome to MyKuttam</Text>
-        <Text style={styles.subtitle}>Your village community platform</Text>
-      </View>
-    </SafeAreaView>
-  );
+  return <NewsScreen />;
 };
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: colors.background,
-  },
-  content: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  title: {
-    fontFamily: fonts.heading,
-    fontSize: 24,
-    color: colors.text,
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontFamily: fonts.body,
-    fontSize: 16,
-    color: colors.textMuted,
-  },
-});
 
