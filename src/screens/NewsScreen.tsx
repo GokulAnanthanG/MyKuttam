@@ -18,6 +18,8 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import RBSheet from 'react-native-raw-bottom-sheet';
+import Video from 'react-native-video';
+import SoundPlayer from 'react-native-sound-player';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Toast from 'react-native-toast-message';
 import { useAuth } from '../context/AuthContext';
@@ -62,6 +64,17 @@ const formatTimeAgo = (dateString: string): string => {
   return `${diffInMonths} month${diffInMonths > 1 ? 's' : ''} ago`;
 };
 
+const formatAudioTime = (seconds: number): string => {
+  if (!seconds || Number.isNaN(seconds) || seconds < 0) {
+    return '00:00';
+  }
+  const minutes = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const paddedSecs = secs < 10 ? `0${secs}` : secs;
+  const paddedMins = minutes < 10 ? `0${minutes}` : minutes;
+  return `${paddedMins}:${paddedSecs}`;
+};
+
 export const NewsScreen = () => {
   const { currentUser } = useAuth();
   const [highlightedNews, setHighlightedNews] = useState<News[]>([]);
@@ -89,6 +102,47 @@ export const NewsScreen = () => {
   const [likedNews, setLikedNews] = useState<Set<string>>(new Set());
   const [likingNews, setLikingNews] = useState<Set<string>>(new Set());
 
+  // Audio playback state
+  const [currentAudioId, setCurrentAudioId] = useState<string | null>(null);
+  const [isAudioPlaying, setIsAudioPlaying] = useState(false);
+  const [audioLoading, setAudioLoading] = useState(false);
+  const [audioDuration, setAudioDuration] = useState(0);
+  const [audioPosition, setAudioPosition] = useState(0);
+  const audioProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopAudioProgressInterval = useCallback(() => {
+    if (audioProgressIntervalRef.current) {
+      clearInterval(audioProgressIntervalRef.current);
+      audioProgressIntervalRef.current = null;
+    }
+  }, []);
+
+  const resetAudioProgress = useCallback(() => {
+    setAudioDuration(0);
+    setAudioPosition(0);
+  }, []);
+
+  const startAudioProgressTracking = useCallback(() => {
+    stopAudioProgressInterval();
+
+    const updateProgress = async () => {
+      try {
+        const info = await SoundPlayer.getInfo();
+        if (typeof info?.duration === 'number' && !Number.isNaN(info.duration)) {
+          setAudioDuration(info.duration);
+        }
+        if (typeof info?.currentTime === 'number' && !Number.isNaN(info.currentTime)) {
+          setAudioPosition(info.currentTime);
+        }
+      } catch (error) {
+        console.warn('Audio progress error:', error);
+      }
+    };
+
+    updateProgress();
+    audioProgressIntervalRef.current = setInterval(updateProgress, 1000);
+  }, [stopAudioProgressInterval]);
+
   // Edit/Delete modal state
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingNews, setEditingNews] = useState<News | null>(null);
@@ -103,6 +157,26 @@ export const NewsScreen = () => {
   // Highlight news detail modal state
   const [showHighlightModal, setShowHighlightModal] = useState(false);
   const [selectedHighlightNews, setSelectedHighlightNews] = useState<News | null>(null);
+
+  useEffect(() => {
+    const finishedSub = SoundPlayer.addEventListener('FinishedPlaying', () => {
+      stopAudioProgressInterval();
+      resetAudioProgress();
+      setIsAudioPlaying(false);
+      setCurrentAudioId(null);
+    });
+
+    return () => {
+      finishedSub.remove();
+      try {
+        SoundPlayer.stop();
+      } catch (stopError) {
+        console.warn('Failed to stop audio on cleanup:', stopError);
+      }
+      stopAudioProgressInterval();
+      resetAudioProgress();
+    };
+  }, [resetAudioProgress, stopAudioProgressInterval]);
 
   // Check if user can edit/delete
   const canEditDelete = (news: News) => {
@@ -376,6 +450,116 @@ export const NewsScreen = () => {
     }
   };
 
+  const stopAudioPlayback = useCallback(() => {
+    try {
+      SoundPlayer.stop();
+    } catch (error) {
+      console.warn('Audio stop error:', error);
+    } finally {
+      stopAudioProgressInterval();
+      resetAudioProgress();
+      setIsAudioPlaying(false);
+      setCurrentAudioId(null);
+      setAudioLoading(false);
+    }
+  }, [resetAudioProgress, stopAudioProgressInterval]);
+
+  const handleAudioToggle = async (news: News) => {
+    if (!news.media_src) return;
+
+    try {
+      setAudioLoading(true);
+      if (currentAudioId === news.id) {
+        if (isAudioPlaying) {
+          SoundPlayer.pause();
+          setIsAudioPlaying(false);
+          stopAudioProgressInterval();
+        } else {
+          try {
+            SoundPlayer.resume();
+            setIsAudioPlaying(true);
+            startAudioProgressTracking();
+          } catch (resumeError) {
+            console.warn('Resume failed, replaying audio:', resumeError);
+            SoundPlayer.playUrl(news.media_src);
+            setIsAudioPlaying(true);
+            startAudioProgressTracking();
+          }
+        }
+      } else {
+        try {
+          SoundPlayer.stop();
+        } catch (stopError) {
+          console.warn('Audio stop before play error:', stopError);
+        }
+        stopAudioProgressInterval();
+        resetAudioProgress();
+        setCurrentAudioId(news.id);
+        SoundPlayer.playUrl(news.media_src);
+        setIsAudioPlaying(true);
+        startAudioProgressTracking();
+      }
+    } catch (error) {
+      console.error('Audio playback error:', error);
+      Toast.show({
+        type: 'error',
+        text1: 'Audio Playback Error',
+        text2: 'Unable to play this audio file.',
+        visibilityTime: 3000,
+      });
+      stopAudioPlayback();
+    } finally {
+      setAudioLoading(false);
+    }
+  };
+
+  const handleMediaError = (context: string, error: unknown) => {
+    console.error(context, error);
+    Toast.show({
+      type: 'error',
+      text1: 'Media Playback Error',
+      text2: context,
+      visibilityTime: 3000,
+    });
+  };
+
+  const getAudioStatusText = (newsId: string) => {
+    const hasProgress = audioDuration > 0;
+    const progressText = hasProgress
+      ? `${formatAudioTime(audioPosition)} / ${formatAudioTime(audioDuration)}`
+      : null;
+
+    if (audioLoading && currentAudioId === newsId) {
+      return 'Loading...';
+    }
+    if (currentAudioId === newsId) {
+      if (isAudioPlaying) {
+        return progressText ? `Playing • ${progressText}` : 'Playing...';
+      }
+      return progressText ? `Paused • ${progressText}` : 'Paused';
+    }
+    return 'Tap to play';
+  };
+
+  const handleCloseHighlightModal = useCallback(() => {
+    if (selectedHighlightNews && currentAudioId === selectedHighlightNews.id) {
+      stopAudioPlayback();
+    }
+    setShowHighlightModal(false);
+    setSelectedHighlightNews(null);
+  }, [currentAudioId, selectedHighlightNews, stopAudioPlayback]);
+
+  const handleOpenHighlightComments = () => {
+    if (!selectedHighlightNews) {
+      return;
+    }
+    const news = selectedHighlightNews;
+    handleCloseHighlightModal();
+    setTimeout(() => {
+      openComments(news);
+    }, 300);
+  };
+
   const handleEditNews = (news: News) => {
     setEditingNews(news);
     setEditTitle(news.title || '');
@@ -535,53 +719,114 @@ export const NewsScreen = () => {
     );
   };
 
-  const renderHighlightCard = ({ item }: { item: News }) => (
-    <Pressable
-      style={styles.highlightCard}
-      onPress={() => {
-        setSelectedHighlightNews(item);
-        setShowHighlightModal(true);
-      }}
-      android_ripple={{ color: colors.primary + '20' }}>
-      <View style={styles.highlightCardInner}>
-        {/* Background image/content */}
-        {item.media_src && item.media_type === 'IMAGE' ? (
-          <Image source={{ uri: item.media_src }} style={styles.highlightBackgroundImage} resizeMode="cover" />
-        ) : (
-          <View style={[styles.highlightBackgroundImage, styles.highlightImagePlaceholder]}>
-            <Icon name="image" size={50} color={colors.textMuted} />
-          </View>
-        )}
-        
-        {/* Circular profile/avatar at top */}
-        <View style={styles.highlightProfileContainer}>
-          {item.created_by?.avatar ? (
-            <Image source={{ uri: item.created_by.avatar }} style={styles.highlightProfileImage} />
-          ) : item.created_by?.name ? (
-            <View style={styles.highlightProfileAvatar}>
-              <Text style={styles.highlightProfileAvatarText}>
-                {item.created_by.name.charAt(0).toUpperCase()}
+  const renderHighlightCard = ({ item }: { item: News }) => {
+    const canEdit = canEditDelete(item);
+
+    return (
+      <View style={styles.highlightCardWrapper}>
+        <Pressable
+          style={styles.highlightCard}
+          onPress={() => {
+            setSelectedHighlightNews(item);
+            setShowHighlightModal(true);
+          }}
+          android_ripple={{ color: colors.primary + '20' }}>
+          <View style={styles.highlightCardInner}>
+            {/* Background image/content */}
+            {item.media_type === 'IMAGE' && item.media_src ? (
+              <Image source={{ uri: item.media_src }} style={styles.highlightBackgroundImage} resizeMode="cover" />
+            ) : item.media_type === 'VIDEO' ? (
+              <View style={[styles.highlightBackgroundImage, styles.highlightVideoPlaceholder]}>
+                <Icon name="play" size={40} color="#fff" />
+                <Text style={styles.highlightVideoText}>Video</Text>
+              </View>
+            ) : item.media_type === 'AUDIO' ? (
+              <View style={[styles.highlightBackgroundImage, styles.highlightAudioPlaceholder]}>
+                <Icon name="music" size={36} color="#fff" />
+                <Text style={styles.highlightAudioPlaceholderText}>Audio</Text>
+              </View>
+            ) : (
+              <View style={[styles.highlightBackgroundImage, styles.highlightImagePlaceholder]}>
+                <Icon name="image" size={50} color={colors.textMuted} />
+              </View>
+            )}
+            
+            {/* Circular profile/avatar at top */}
+            <View style={styles.highlightProfileContainer}>
+              {item.created_by?.avatar ? (
+                <Image source={{ uri: item.created_by.avatar }} style={styles.highlightProfileImage} />
+              ) : item.created_by?.name ? (
+                <View style={styles.highlightProfileAvatar}>
+                  <Text style={styles.highlightProfileAvatarText}>
+                    {item.created_by.name.charAt(0).toUpperCase()}
+                  </Text>
+                </View>
+              ) : (
+                <View style={styles.highlightProfileAvatar}>
+                  <Icon name="user" size={24} color="#fff" />
+                </View>
+              )}
+            </View>
+
+            {canEdit && (
+              <TouchableOpacity
+                style={styles.highlightMenuButton}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setShowMenuForNews(showMenuForNews === item.id ? null : item.id);
+                }}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                <Icon name="ellipsis-v" size={16} color="#fff" />
+              </TouchableOpacity>
+            )}
+
+            {/* Gradient overlay for text readability */}
+            <View style={styles.highlightGradientOverlay} />
+            
+            {/* Title overlay at bottom */}
+            <View style={styles.highlightContent}>
+              <Text style={styles.highlightTitle} numberOfLines={1}>
+                {item.title}
               </Text>
             </View>
-          ) : (
-            <View style={styles.highlightProfileAvatar}>
-              <Icon name="user" size={24} color="#fff" />
-            </View>
-          )}
-        </View>
+          </View>
+        </Pressable>
 
-        {/* Gradient overlay for text readability */}
-        <View style={styles.highlightGradientOverlay} />
-        
-        {/* Title overlay at bottom */}
-        <View style={styles.highlightContent}>
-          <Text style={styles.highlightTitle} numberOfLines={1}>
-            {item.title}
-          </Text>
-        </View>
+        {/* Menu Modal for highlight card */}
+        {showMenuForNews === item.id && (
+          <Modal
+            visible={true}
+            transparent
+            animationType="fade"
+            onRequestClose={() => setShowMenuForNews(null)}>
+            <Pressable
+              style={styles.menuOverlay}
+              onPress={() => setShowMenuForNews(null)}>
+              <View style={styles.menuContainer}>
+                <TouchableOpacity
+                  style={styles.menuItem}
+                  onPress={() => {
+                    handleEditNews(item);
+                  }}>
+                  <Icon name="edit" size={18} color={colors.text} />
+                  <Text style={styles.menuItemText}>Edit</Text>
+                </TouchableOpacity>
+                <View style={styles.menuDivider} />
+                <TouchableOpacity
+                  style={[styles.menuItem, styles.menuItemDanger]}
+                  onPress={() => {
+                    handleDeleteNews(item);
+                  }}>
+                  <Icon name="trash" size={18} color={colors.danger} />
+                  <Text style={[styles.menuItemText, styles.menuItemTextDanger]}>Delete</Text>
+                </TouchableOpacity>
+              </View>
+            </Pressable>
+          </Modal>
+        )}
       </View>
-    </Pressable>
-  );
+    );
+  };
 
   const renderFeaturedItem = ({ item }: { item: News }) => {
     const isExpanded = expandedDescriptions.has(item.id);
@@ -650,6 +895,51 @@ export const NewsScreen = () => {
 
         {item.media_src && item.media_type === 'IMAGE' && (
           <Image source={{ uri: item.media_src }} style={styles.featuredImage} resizeMode="cover" />
+        )}
+
+        {item.media_src && item.media_type === 'VIDEO' && (
+          <View style={styles.videoContainer}>
+            <Video
+              source={{ uri: item.media_src }}
+              style={styles.videoPlayer}
+              controls
+              resizeMode="contain"
+              poster={item.media_src}
+              onError={(error) => handleMediaError('Unable to play this video.', error)}
+            />
+          </View>
+        )}
+
+        {item.media_src && item.media_type === 'AUDIO' && (
+          <View style={styles.audioContainer}>
+            <View style={styles.audioHeader}>
+              <Icon name="music" size={16} color={colors.primary} />
+              <Text style={styles.audioLabel}>Audio message</Text>
+            </View>
+            <View style={styles.audioControls}>
+              <TouchableOpacity
+                style={[
+                  styles.audioControlButton,
+                  currentAudioId === item.id && isAudioPlaying && styles.audioControlButtonActive,
+                ]}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleAudioToggle(item);
+                }}
+                disabled={audioLoading && currentAudioId === item.id}>
+                {audioLoading && currentAudioId === item.id ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Icon
+                    name={currentAudioId === item.id && isAudioPlaying ? 'pause' : 'play'}
+                    size={14}
+                    color="#fff"
+                  />
+                )}
+              </TouchableOpacity>
+              <Text style={styles.audioStatusText}>{getAudioStatusText(item.id)}</Text>
+            </View>
+          </View>
         )}
 
         {item.external_url && (
@@ -1018,10 +1308,7 @@ export const NewsScreen = () => {
         visible={showHighlightModal}
         transparent
         animationType="slide"
-        onRequestClose={() => {
-          setShowHighlightModal(false);
-          setSelectedHighlightNews(null);
-        }}>
+        onRequestClose={handleCloseHighlightModal}>
         <View style={styles.highlightModalOverlay}>
           <View style={styles.highlightModalContainer}>
             <View style={styles.highlightModalHeader}>
@@ -1029,10 +1316,7 @@ export const NewsScreen = () => {
                 {selectedHighlightNews?.title}
               </Text>
               <TouchableOpacity
-                onPress={() => {
-                  setShowHighlightModal(false);
-                  setSelectedHighlightNews(null);
-                }}>
+                onPress={handleCloseHighlightModal}>
                 <Icon name="times" size={24} color={colors.text} />
               </TouchableOpacity>
             </View>
@@ -1044,6 +1328,57 @@ export const NewsScreen = () => {
                   style={styles.highlightModalImage}
                   resizeMode="cover"
                 />
+              )}
+
+              {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'VIDEO' && (
+                <View style={styles.modalVideoContainer}>
+                  <Video
+                    source={{ uri: selectedHighlightNews.media_src }}
+                    style={styles.modalVideoPlayer}
+                    controls
+                    resizeMode="contain"
+                    onError={(error) => handleMediaError('Unable to play this highlight video.', error)}
+                  />
+                </View>
+              )}
+
+              {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'AUDIO' && (
+                <View style={styles.modalAudioContainer}>
+                  <View style={styles.audioHeader}>
+                    <Icon name="music" size={18} color={colors.primary} />
+                    <Text style={styles.audioLabel}>Audio message</Text>
+                  </View>
+                  <View style={styles.audioControls}>
+                    <TouchableOpacity
+                      style={[
+                        styles.audioControlButton,
+                        currentAudioId === selectedHighlightNews.id &&
+                          isAudioPlaying &&
+                          styles.audioControlButtonActive,
+                      ]}
+                      onPress={() => {
+                        if (selectedHighlightNews) {
+                          handleAudioToggle(selectedHighlightNews);
+                        }
+                      }}
+                      disabled={audioLoading && currentAudioId === selectedHighlightNews.id}>
+                      {audioLoading && currentAudioId === selectedHighlightNews.id ? (
+                        <ActivityIndicator size="small" color="#fff" />
+                      ) : (
+                        <Icon
+                          name={
+                            currentAudioId === selectedHighlightNews.id && isAudioPlaying ? 'pause' : 'play'
+                          }
+                          size={14}
+                          color="#fff"
+                        />
+                      )}
+                    </TouchableOpacity>
+                    <Text style={styles.audioStatusText}>
+                      {getAudioStatusText(selectedHighlightNews.id)}
+                    </Text>
+                  </View>
+                </View>
               )}
 
               {selectedHighlightNews?.description && (
@@ -1062,6 +1397,15 @@ export const NewsScreen = () => {
                   }}>
                   <Icon name="external-link" size={20} color={colors.primary} />
                   <Text style={styles.highlightModalLinkText}>Open Link</Text>
+                </TouchableOpacity>
+              )}
+
+              {selectedHighlightNews && (
+                <TouchableOpacity
+                  style={styles.highlightModalCommentsButton}
+                  onPress={handleOpenHighlightComments}>
+                  <Icon name="comment" size={18} color={colors.primary} />
+                  <Text style={styles.highlightModalCommentsText}>View comments</Text>
                 </TouchableOpacity>
               )}
 
@@ -1107,6 +1451,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     gap: 12,
   },
+  highlightCardWrapper: {
+    position: 'relative',
+  },
   highlightCard: {
     width: 120,
     height: 200,
@@ -1136,6 +1483,30 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  highlightVideoPlaceholder: {
+    backgroundColor: '#1f1f1f',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  highlightVideoText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  highlightAudioPlaceholder: {
+    backgroundColor: '#0f3d4c',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  highlightAudioPlaceholderText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
   highlightProfileContainer: {
     position: 'absolute',
     top: 8,
@@ -1164,6 +1535,18 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: '600',
     color: '#fff',
+  },
+  highlightMenuButton: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 3,
   },
   highlightGradientOverlay: {
     position: 'absolute',
@@ -1260,6 +1643,58 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     marginBottom: 12,
     backgroundColor: colors.cardMuted,
+  },
+  videoContainer: {
+    width: '100%',
+    height: 220,
+    borderRadius: 8,
+    overflow: 'hidden',
+    marginBottom: 12,
+    backgroundColor: '#000',
+  },
+  videoPlayer: {
+    width: '100%',
+    height: '100%',
+  },
+  audioContainer: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 12,
+    backgroundColor: colors.cardMuted,
+  },
+  audioHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 8,
+  },
+  audioLabel: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.text,
+  },
+  audioControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  audioControlButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  audioControlButtonActive: {
+    backgroundColor: colors.danger,
+  },
+  audioStatusText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
   },
   featuredActions: {
     flexDirection: 'row',
@@ -1624,6 +2059,26 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     backgroundColor: colors.cardMuted,
   },
+  modalVideoContainer: {
+    width: '100%',
+    height: 260,
+    borderRadius: 12,
+    overflow: 'hidden',
+    marginBottom: 16,
+    backgroundColor: '#000',
+  },
+  modalVideoPlayer: {
+    width: '100%',
+    height: '100%',
+  },
+  modalAudioContainer: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    backgroundColor: colors.cardMuted,
+  },
   highlightModalDescription: {
     marginBottom: 16,
   },
@@ -1648,6 +2103,25 @@ const styles = StyleSheet.create({
     fontFamily: fonts.heading,
     fontSize: 16,
     color: '#fff',
+    fontWeight: '600',
+  },
+  highlightModalCommentsButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 10,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: colors.primary + '40',
+    marginBottom: 16,
+    backgroundColor: colors.primary + '10',
+  },
+  highlightModalCommentsText: {
+    fontFamily: fonts.heading,
+    fontSize: 15,
+    color: colors.primary,
     fontWeight: '600',
   },
   highlightModalFooter: {
