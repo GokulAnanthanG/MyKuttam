@@ -1,7 +1,7 @@
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import { HomeScreen } from '../screens/HomeScreen';
-import { DonationScreen } from '../screens/DonationScreen';
+import { DonationNavigator } from './DonationNavigator';
 import { GalleryScreen } from '../screens/GalleryScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { colors } from '../theme/colors';
@@ -71,7 +71,7 @@ export const BottomTabNavigator = () => {
       />
       <Tab.Screen
         name="Donation"
-        component={DonationScreen}
+        component={DonationNavigator}
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
             <TabIcon focused={focused} iconName="money" />

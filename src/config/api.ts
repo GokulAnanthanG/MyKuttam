@@ -39,6 +39,13 @@ export const endpoints = {
   likes: `${BASE_URL}/api/likes`,
   likeStatus: `${BASE_URL}/api/likes/status`,
   likesByNews: (newsId: string) => `${BASE_URL}/api/likes/news/${newsId}`,
+  // Donation endpoints
+  donations: `${BASE_URL}/api/donations`,
+  donationById: (id: string) => `${BASE_URL}/api/donations/${id}`,
+  donationCategoriesSummary: `${BASE_URL}/api/donations/categories-summary`,
+  // Expense endpoints
+  expenses: `${BASE_URL}/api/expenses`,
+  expenseById: (id: string) => `${BASE_URL}/api/expenses/${id}`,
 };
 
 export const ENV = Config?.ENV || 'development';
