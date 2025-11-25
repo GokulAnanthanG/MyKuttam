@@ -117,8 +117,8 @@ export const NewsScreen = () => {
   const [audioPosition, setAudioPosition] = useState(0);
   const audioProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Video playback state
-  const [playingVideos, setPlayingVideos] = useState<Set<string>>(new Set());
+  // Video reveal state to lazy load players
+  const [revealedVideos, setRevealedVideos] = useState<Set<string>>(new Set());
 
   const stopAudioProgressInterval = useCallback(() => {
     if (audioProgressIntervalRef.current) {
@@ -775,6 +775,20 @@ export const NewsScreen = () => {
     return 'Tap to play';
   };
 
+  const handleRevealVideo = useCallback((newsId?: string) => {
+    if (!newsId) {
+      return;
+    }
+    setRevealedVideos((prev) => {
+      if (prev.has(newsId)) {
+        return prev;
+      }
+      const newSet = new Set(prev);
+      newSet.add(newsId);
+      return newSet;
+    });
+  }, []);
+
   const handleCloseHighlightModal = useCallback(() => {
     if (selectedHighlightNews && currentAudioId === selectedHighlightNews.id) {
       stopAudioPlayback();
@@ -1071,6 +1085,7 @@ export const NewsScreen = () => {
         : item.description.substring(0, 150)
       : '';
     const canEdit = canEditDelete(item);
+    const isVideoRevealed = revealedVideos.has(item.id);
 
     return (
       <View style={styles.featuredCard}>
@@ -1133,18 +1148,30 @@ export const NewsScreen = () => {
 
         {item.media_src && item.media_type === 'VIDEO' && (
           <View style={styles.videoContainer}>
-            <Video
-              source={{ uri: item.media_src }}
-              style={styles.videoPlayer}
-              controls
-              paused={!playingVideos.has(item.id)}
-              resizeMode="contain"
-              poster={item.media_src}
-              onError={(error) => handleMediaError('Unable to play this video.', error)}
-              onLoad={() => {
-                // Video loaded, but don't auto-play
-              }}
-            />
+            {isVideoRevealed ? (
+              <Video
+                source={{ uri: item.media_src }}
+                style={styles.videoPlayer}
+                controls
+                resizeMode="contain"
+                poster={item.media_src}
+                onError={(error) => handleMediaError('Unable to play this video.', error)}
+              />
+            ) : (
+              <TouchableOpacity
+                style={styles.videoPlaceholder}
+                activeOpacity={0.9}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  handleRevealVideo(item.id);
+                }}>
+                <View style={styles.videoPlayButton}>
+                  <Icon name="play" size={18} color="#fff" />
+                </View>
+                <Text style={styles.videoPlayText}>Watch video</Text>
+                <Text style={styles.videoPlaySubText}>Tap to stream when you're ready</Text>
+              </TouchableOpacity>
+            )}
           </View>
         )}
 
@@ -1570,17 +1597,26 @@ export const NewsScreen = () => {
 
               {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'VIDEO' && (
                 <View style={styles.modalVideoContainer}>
-                  <Video
-                    source={{ uri: selectedHighlightNews.media_src }}
-                    style={styles.modalVideoPlayer}
-                    controls
-                    paused={!playingVideos.has(selectedHighlightNews.id)}
-                    resizeMode="contain"
-                    onError={(error) => handleMediaError('Unable to play this highlight video.', error)}
-                    onLoad={() => {
-                      // Video loaded, but don't auto-play
-                    }}
-                  />
+                  {selectedHighlightNews.id && revealedVideos.has(selectedHighlightNews.id) ? (
+                    <Video
+                      source={{ uri: selectedHighlightNews.media_src }}
+                      style={styles.modalVideoPlayer}
+                      controls
+                      resizeMode="contain"
+                      onError={(error) => handleMediaError('Unable to play this highlight video.', error)}
+                    />
+                  ) : (
+                    <TouchableOpacity
+                      style={[styles.videoPlaceholder, styles.modalVideoPlaceholder]}
+                      activeOpacity={0.9}
+                      onPress={() => handleRevealVideo(selectedHighlightNews?.id)}>
+                      <View style={styles.videoPlayButton}>
+                        <Icon name="play" size={18} color="#fff" />
+                      </View>
+                      <Text style={styles.videoPlayText}>Play highlight</Text>
+                      <Text style={styles.videoPlaySubText}>Video loads only after you tap</Text>
+                    </TouchableOpacity>
+                  )}
                 </View>
               )}
 
@@ -2081,6 +2117,38 @@ const styles = StyleSheet.create({
     width: '100%',
     height: '100%',
   },
+  videoPlaceholder: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#101828',
+    paddingHorizontal: 24,
+    gap: 10,
+  },
+  videoPlayButton: {
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.35,
+    shadowRadius: 12,
+    elevation: 6,
+  },
+  videoPlayText: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: '#fff',
+  },
+  videoPlaySubText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textMuted,
+    textAlign: 'center',
+  },
   audioContainer: {
     borderWidth: 1,
     borderColor: colors.border,
@@ -2493,6 +2561,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
   modalVideoPlayer: {
+    width: '100%',
+    height: '100%',
+  },
+  modalVideoPlaceholder: {
     width: '100%',
     height: '100%',
   },
