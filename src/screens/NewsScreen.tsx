@@ -20,6 +20,13 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import RBSheet from 'react-native-raw-bottom-sheet';
 import Video from 'react-native-video';
 import SoundPlayer from 'react-native-sound-player';
+import {
+  launchImageLibrary,
+  launchCamera,
+  type ImagePickerResponse,
+  type MediaType as PickerMediaType,
+} from 'react-native-image-picker';
+import DocumentPicker from 'react-native-document-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Toast from 'react-native-toast-message';
 import { useAuth } from '../context/AuthContext';
@@ -110,6 +117,9 @@ export const NewsScreen = () => {
   const [audioPosition, setAudioPosition] = useState(0);
   const audioProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Video playback state
+  const [playingVideos, setPlayingVideos] = useState<Set<string>>(new Set());
+
   const stopAudioProgressInterval = useCallback(() => {
     if (audioProgressIntervalRef.current) {
       clearInterval(audioProgressIntervalRef.current);
@@ -158,6 +168,16 @@ export const NewsScreen = () => {
   const [showHighlightModal, setShowHighlightModal] = useState(false);
   const [selectedHighlightNews, setSelectedHighlightNews] = useState<News | null>(null);
 
+  // Create news modal state
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [createTitle, setCreateTitle] = useState('');
+  const [createDescription, setCreateDescription] = useState('');
+  const [createMediaType, setCreateMediaType] = useState<'IMAGE' | 'VIDEO' | 'AUDIO'>('IMAGE');
+  const [createIsHighlighted, setCreateIsHighlighted] = useState(false);
+  const [createExternalUrl, setCreateExternalUrl] = useState('');
+  const [selectedMedia, setSelectedMedia] = useState<{ uri: string; type: string; name: string; fileSize?: number } | null>(null);
+  const [creatingNews, setCreatingNews] = useState(false);
+
   useEffect(() => {
     const finishedSub = SoundPlayer.addEventListener('FinishedPlaying', () => {
       stopAudioProgressInterval();
@@ -180,6 +200,15 @@ export const NewsScreen = () => {
 
   // Check if user can edit/delete
   const canEditDelete = (news: News) => {
+    if (!currentUser) return false;
+    const userRole = currentUser.role;
+    const isAdmin = userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
+    const isHelper = userRole === 'HELPHER' && currentUser.account_type === 'MANAGEMENT';
+    return isAdmin || isHelper;
+  };
+
+  // Check if user can create news
+  const canCreateNews = () => {
     if (!currentUser) return false;
     const userRole = currentUser.role;
     const isAdmin = userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
@@ -521,6 +550,211 @@ export const NewsScreen = () => {
       text2: context,
       visibilityTime: 3000,
     });
+  };
+
+  const handleSelectMedia = async () => {
+    // For audio files, use document picker
+    if (createMediaType === 'AUDIO') {
+      try {
+        const result = await DocumentPicker.pick({
+          type: [DocumentPicker.types.audio],
+          copyTo: 'cachesDirectory',
+        });
+
+        const file = Array.isArray(result) ? result[0] : result;
+        
+        if (!file) {
+          return;
+        }
+
+        // Check file size (10MB = 10 * 1024 * 1024 bytes)
+        const maxSize = 10 * 1024 * 1024;
+        if (file.size && file.size > maxSize) {
+          Toast.show({
+            type: 'error',
+            text1: 'File Too Large',
+            text2: 'File size must be less than 10MB',
+            visibilityTime: 3000,
+          });
+          return;
+        }
+
+        const fileName = file.name || `audio_${Date.now()}.${file.type?.split('/')[1] || 'mp3'}`;
+        const mimeType = file.type || 'audio/mpeg';
+
+        setSelectedMedia({
+          uri: file.uri,
+          type: mimeType,
+          name: fileName,
+          fileSize: file.size || undefined,
+        });
+      } catch (error: any) {
+        if (DocumentPicker.isCancel(error)) {
+          // User cancelled
+          return;
+        }
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: error?.message || 'Failed to select audio file',
+          visibilityTime: 3000,
+        });
+      }
+      return;
+    }
+
+    // For image and video, use image picker
+    let options: any = {
+      includeBase64: false,
+    };
+
+    if (createMediaType === 'IMAGE') {
+      options.mediaType = 'photo';
+      options.quality = 0.8;
+      options.maxWidth = 1920;
+      options.maxHeight = 1920;
+    } else if (createMediaType === 'VIDEO') {
+      options.mediaType = 'video';
+      options.videoQuality = 'high';
+    }
+
+    launchImageLibrary(options, (response: ImagePickerResponse) => {
+      if (response.didCancel) {
+        return;
+      }
+
+      if (response.errorCode) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: response.errorMessage || 'Failed to select media',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      const asset = response.assets?.[0];
+      if (!asset) {
+        return;
+      }
+
+      // Check file size (10MB = 10 * 1024 * 1024 bytes)
+      const maxSize = 10 * 1024 * 1024;
+      if (asset.fileSize && asset.fileSize > maxSize) {
+        Toast.show({
+          type: 'error',
+          text1: 'File Too Large',
+          text2: 'File size must be less than 10MB',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      if (asset.uri) {
+        const fileExtension = asset.uri.split('.').pop() || '';
+        const fileName = `media_${Date.now()}.${fileExtension}`;
+        const mimeType = asset.type || `application/octet-stream`;
+
+        setSelectedMedia({
+          uri: asset.uri,
+          type: mimeType,
+          name: fileName,
+          fileSize: asset.fileSize,
+        });
+      }
+    });
+  };
+
+  const handleCreateNews = async () => {
+    if (!createTitle.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Title is required',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
+    if (!selectedMedia) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Please select a media file',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
+    try {
+      setCreatingNews(true);
+
+      // Prepare FormData
+      const formData = new FormData();
+      formData.append('title', createTitle.trim());
+      formData.append('media_type', createMediaType);
+      
+      if (createDescription.trim()) {
+        formData.append('description', createDescription.trim());
+      }
+      
+      formData.append('is_highlighted', String(createIsHighlighted));
+      
+      if (createExternalUrl.trim()) {
+        formData.append('external_url', createExternalUrl.trim());
+      }
+
+      // Append media file
+      formData.append('media', {
+        uri: selectedMedia.uri,
+        type: selectedMedia.type,
+        name: selectedMedia.name,
+      } as any);
+
+      const response = await NewsService.createNews({
+        title: createTitle.trim(),
+        media_type: createMediaType,
+        description: createDescription.trim() || undefined,
+        is_highlighted: createIsHighlighted,
+        external_url: createExternalUrl.trim() || undefined,
+        media: {
+          uri: selectedMedia.uri,
+          type: selectedMedia.type,
+          name: selectedMedia.name,
+        },
+      });
+
+      if (response.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'News created successfully',
+          visibilityTime: 2000,
+        });
+        
+        // Reset form
+        setCreateTitle('');
+        setCreateDescription('');
+        setCreateMediaType('IMAGE');
+        setCreateIsHighlighted(false);
+        setCreateExternalUrl('');
+        setSelectedMedia(null);
+        setShowCreateModal(false);
+
+        // Refresh news
+        await fetchFeaturedNews(1, false);
+        await fetchHighlightedNews();
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to create news',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setCreatingNews(false);
+    }
   };
 
   const getAudioStatusText = (newsId: string) => {
@@ -903,9 +1137,13 @@ export const NewsScreen = () => {
               source={{ uri: item.media_src }}
               style={styles.videoPlayer}
               controls
+              paused={!playingVideos.has(item.id)}
               resizeMode="contain"
               poster={item.media_src}
               onError={(error) => handleMediaError('Unable to play this video.', error)}
+              onLoad={() => {
+                // Video loaded, but don't auto-play
+              }}
             />
           </View>
         )}
@@ -1336,8 +1574,12 @@ export const NewsScreen = () => {
                     source={{ uri: selectedHighlightNews.media_src }}
                     style={styles.modalVideoPlayer}
                     controls
+                    paused={!playingVideos.has(selectedHighlightNews.id)}
                     resizeMode="contain"
                     onError={(error) => handleMediaError('Unable to play this highlight video.', error)}
+                    onLoad={() => {
+                      // Video loaded, but don't auto-play
+                    }}
                   />
                 </View>
               )}
@@ -1415,6 +1657,189 @@ export const NewsScreen = () => {
                 </Text>
               </View>
             </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Floating Action Button */}
+      {canCreateNews() && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setShowCreateModal(true)}
+          activeOpacity={0.8}>
+          <Icon name="plus" size={24} color="#fff" />
+        </TouchableOpacity>
+      )}
+
+      {/* Create News Modal */}
+      <Modal
+        visible={showCreateModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCreateModal(false)}>
+        <View style={styles.createModalOverlay}>
+          <View style={styles.createModalContainer}>
+            <View style={styles.createModalHeader}>
+              <Text style={styles.createModalTitle}>Create News</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCreateModal(false);
+                  setCreateTitle('');
+                  setCreateDescription('');
+                  setCreateMediaType('IMAGE');
+                  setCreateIsHighlighted(false);
+                  setCreateExternalUrl('');
+                  setSelectedMedia(null);
+                }}>
+                <Icon name="times" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.createModalContent} showsVerticalScrollIndicator={false}>
+              <View style={styles.createFormGroup}>
+                <Text style={styles.createLabel}>Title *</Text>
+                <TextInput
+                  style={[styles.createTextInput, styles.createTitleInput]}
+                  placeholder="Enter title..."
+                  placeholderTextColor={colors.textMuted}
+                  value={createTitle}
+                  onChangeText={setCreateTitle}
+                  maxLength={200}
+                />
+              </View>
+
+              <View style={styles.createFormGroup}>
+                <Text style={styles.createLabel}>Description</Text>
+                <TextInput
+                  style={styles.createTextInput}
+                  placeholder="Enter description..."
+                  placeholderTextColor={colors.textMuted}
+                  value={createDescription}
+                  onChangeText={setCreateDescription}
+                  multiline
+                  numberOfLines={4}
+                  textAlignVertical="top"
+                />
+              </View>
+
+              <View style={styles.createFormGroup}>
+                <Text style={styles.createLabel}>Media Type *</Text>
+                <View style={styles.mediaTypeContainer}>
+                  {(['IMAGE', 'VIDEO', 'AUDIO'] as const).map((type) => (
+                    <TouchableOpacity
+                      key={type}
+                      style={[
+                        styles.mediaTypeButton,
+                        createMediaType === type && styles.mediaTypeButtonActive,
+                      ]}
+                      onPress={() => {
+                        setCreateMediaType(type);
+                        setSelectedMedia(null); // Reset media when type changes
+                      }}>
+                      <Text
+                        style={[
+                          styles.mediaTypeButtonText,
+                          createMediaType === type && styles.mediaTypeButtonTextActive,
+                        ]}>
+                        {type}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              <View style={styles.createFormGroup}>
+                <Text style={styles.createLabel}>Media File * (Max 10MB)</Text>
+                <TouchableOpacity
+                  style={styles.mediaSelectButton}
+                  onPress={handleSelectMedia}>
+                  <Icon name="upload" size={20} color={colors.primary} />
+                  <Text style={styles.mediaSelectButtonText}>
+                    {selectedMedia ? 'Change Media' : 'Select Media'}
+                  </Text>
+                </TouchableOpacity>
+                {selectedMedia && (
+                  <View style={styles.selectedMediaContainer}>
+                    <Icon
+                      name={createMediaType === 'IMAGE' ? 'image' : createMediaType === 'VIDEO' ? 'video-camera' : 'music'}
+                      size={16}
+                      color={colors.primary}
+                    />
+                    <Text style={styles.selectedMediaText} numberOfLines={1}>
+                      {selectedMedia.name}
+                    </Text>
+                    {selectedMedia.fileSize && (
+                      <Text style={styles.selectedMediaSize}>
+                        ({(selectedMedia.fileSize / (1024 * 1024)).toFixed(2)} MB)
+                      </Text>
+                    )}
+                    <TouchableOpacity
+                      onPress={() => setSelectedMedia(null)}
+                      style={styles.removeMediaButton}>
+                      <Icon name="times" size={14} color={colors.danger} />
+                    </TouchableOpacity>
+                  </View>
+                )}
+                {selectedMedia && createMediaType === 'IMAGE' && (
+                  <Image source={{ uri: selectedMedia.uri }} style={styles.selectedMediaPreview} />
+                )}
+              </View>
+
+              <View style={styles.createFormGroup}>
+                <Text style={styles.createLabel}>External URL (Optional)</Text>
+                <TextInput
+                  style={[styles.createTextInput, styles.createTitleInput]}
+                  placeholder="https://example.com"
+                  placeholderTextColor={colors.textMuted}
+                  value={createExternalUrl}
+                  onChangeText={setCreateExternalUrl}
+                  keyboardType="url"
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                />
+              </View>
+
+              <View style={styles.createFormGroup}>
+                <View style={styles.switchContainer}>
+                  <Text style={styles.createLabel}>Highlighted News</Text>
+                  <Switch
+                    value={createIsHighlighted}
+                    onValueChange={setCreateIsHighlighted}
+                    trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                    thumbColor={createIsHighlighted ? colors.primary : colors.textMuted}
+                  />
+                </View>
+                <Text style={styles.switchDescription}>
+                  Highlighted news will appear in the highlights section at the top
+                </Text>
+              </View>
+            </ScrollView>
+
+            <View style={styles.createModalFooter}>
+              <TouchableOpacity
+                style={[styles.createButton, styles.createButtonCancel]}
+                onPress={() => {
+                  setShowCreateModal(false);
+                  setCreateTitle('');
+                  setCreateDescription('');
+                  setCreateMediaType('IMAGE');
+                  setCreateIsHighlighted(false);
+                  setCreateExternalUrl('');
+                  setSelectedMedia(null);
+                }}>
+                <Text style={styles.createButtonCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.createButton, styles.createButtonSave]}
+                onPress={handleCreateNews}
+                disabled={creatingNews || !createTitle.trim() || !selectedMedia}>
+                {creatingNews ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <Text style={styles.createButtonSaveText}>Create</Text>
+                )}
+              </TouchableOpacity>
+            </View>
           </View>
         </View>
       </Modal>
@@ -2134,6 +2559,188 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     textAlign: 'center',
+  },
+  // Floating Action Button
+  fab: {
+    position: 'absolute',
+    bottom: 20,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 8,
+    zIndex: 1000,
+  },
+  // Create News Modal
+  createModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  createModalContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '90%',
+  },
+  createModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  createModalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  createModalContent: {
+    padding: 16,
+    maxHeight: 500,
+  },
+  createFormGroup: {
+    marginBottom: 20,
+  },
+  createLabel: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+    marginBottom: 8,
+  },
+  createTextInput: {
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    padding: 12,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minHeight: 100,
+  },
+  createTitleInput: {
+    minHeight: 50,
+  },
+  mediaTypeContainer: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  mediaTypeButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.background,
+    alignItems: 'center',
+  },
+  mediaTypeButtonActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  mediaTypeButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  mediaTypeButtonTextActive: {
+    color: '#fff',
+  },
+  mediaSelectButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    borderStyle: 'dashed',
+    backgroundColor: colors.primary + '10',
+  },
+  mediaSelectButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    fontWeight: '600',
+    color: colors.primary,
+  },
+  selectedMediaContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 12,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  selectedMediaText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  selectedMediaSize: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
+  removeMediaButton: {
+    padding: 4,
+  },
+  selectedMediaPreview: {
+    width: '100%',
+    height: 200,
+    borderRadius: 8,
+    marginTop: 12,
+    backgroundColor: colors.cardMuted,
+  },
+  createModalFooter: {
+    flexDirection: 'row',
+    padding: 16,
+    gap: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  createButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  createButtonCancel: {
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  createButtonSave: {
+    backgroundColor: colors.primary,
+  },
+  createButtonCancelText: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+  },
+  createButtonSaveText: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: '#fff',
   },
 });
 
