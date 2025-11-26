@@ -91,6 +91,8 @@ export const NewsScreen = () => {
   const [loadingMore, setLoadingMore] = useState(false);
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
+  const [imageModalVisible, setImageModalVisible] = useState(false);
+  const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   
   // Comments bottom sheet
   const bottomSheetRef = useRef<any>(null);
@@ -982,7 +984,15 @@ export const NewsScreen = () => {
           <View style={styles.highlightCardInner}>
             {/* Background image/content */}
             {item.media_type === 'IMAGE' && item.media_src ? (
-              <Image source={{ uri: item.media_src }} style={styles.highlightBackgroundImage} resizeMode="cover" />
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setSelectedImageUri(item.media_src);
+                  setImageModalVisible(true);
+                }}>
+                <Image source={{ uri: item.media_src }} style={styles.highlightBackgroundImage} resizeMode="cover" />
+              </TouchableOpacity>
             ) : item.media_type === 'VIDEO' ? (
               <View style={[styles.highlightBackgroundImage, styles.highlightVideoPlaceholder]}>
                 <Icon name="play" size={40} color="#fff" />
@@ -1143,7 +1153,15 @@ export const NewsScreen = () => {
         )}
 
         {item.media_src && item.media_type === 'IMAGE' && (
-          <Image source={{ uri: item.media_src }} style={styles.featuredImage} resizeMode="cover" />
+          <TouchableOpacity
+            activeOpacity={0.9}
+            onPress={(e) => {
+              e.stopPropagation();
+              setSelectedImageUri(item.media_src);
+              setImageModalVisible(true);
+            }}>
+            <Image source={{ uri: item.media_src }} style={styles.featuredImage} resizeMode="cover" />
+          </TouchableOpacity>
         )}
 
         {item.media_src && item.media_type === 'VIDEO' && (
@@ -1877,6 +1895,29 @@ export const NewsScreen = () => {
               </TouchableOpacity>
             </View>
           </View>
+        </View>
+      </Modal>
+
+      {/* Image Modal - Full Size View */}
+      <Modal
+        visible={imageModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setImageModalVisible(false)}>
+        <View style={styles.imageModalOverlay}>
+          <TouchableOpacity
+            style={styles.imageModalCloseButton}
+            onPress={() => setImageModalVisible(false)}
+            activeOpacity={0.8}>
+            <Icon name="times" size={24} color="#fff" />
+          </TouchableOpacity>
+          {selectedImageUri && (
+            <Image
+              source={{ uri: selectedImageUri }}
+              style={styles.imageModalImage}
+              resizeMode="contain"
+            />
+          )}
         </View>
       </Modal>
     </SafeAreaView>
@@ -2813,6 +2854,28 @@ const styles = StyleSheet.create({
     fontFamily: fonts.heading,
     fontSize: 16,
     color: '#fff',
+  },
+  imageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageModalCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    zIndex: 1000,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  imageModalImage: {
+    width: '100%',
+    height: '100%',
   },
 });
 

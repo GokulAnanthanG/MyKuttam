@@ -163,16 +163,38 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
   const canManageSubcategory = useMemo(() => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
+      console.log('canManageSubcategory: false - not management user');
       return false;
     }
     if (currentUser.role === 'ADMIN' || currentUser.role === 'SUB_ADMIN') {
+      console.log('canManageSubcategory: true - admin/sub-admin');
       return true;
     }
     if (currentUser.role === 'DONATION_MANAGER') {
-      return (managers || []).some((manager) => manager.id === currentUser.id);
+      if (!currentUser.id) {
+        console.log('canManageSubcategory: false - no user id');
+        return false;
+      }
+      // Check both route params managers and fetched subcategory managers
+      const routeManagerIds = (managers || []).map((m) => m.id);
+      const subcategoryManagerIds = subcategoryManagers.map((m) => m.id);
+      const isInRouteManagers = routeManagerIds.includes(currentUser.id);
+      const isInSubcategoryManagers = subcategoryManagerIds.includes(currentUser.id);
+      
+      console.log('canManageSubcategory check for DONATION_MANAGER:', {
+        currentUserId: currentUser.id,
+        routeManagerIds,
+        subcategoryManagerIds,
+        isInRouteManagers,
+        isInSubcategoryManagers,
+        result: isInRouteManagers || isInSubcategoryManagers,
+      });
+      
+      return isInRouteManagers || isInSubcategoryManagers;
     }
+    console.log('canManageSubcategory: false - role not matched');
     return false;
-  }, [currentUser, managers]);
+  }, [currentUser, managers, subcategoryManagers]);
 
   // Management viewers (see all statuses) vs normal users (see only approved/success)
   const isManagementViewer = useMemo(() => {
