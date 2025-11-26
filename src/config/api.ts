@@ -46,6 +46,11 @@ export const endpoints = {
   // Expense endpoints
   expenses: `${BASE_URL}/api/expenses`,
   expenseById: (id: string) => `${BASE_URL}/api/expenses/${id}`,
+  // Donation manager mapping endpoints
+  donationManagerMappings: `${BASE_URL}/api/donation-manager-mappings`,
+  donationManagers: `${BASE_URL}/api/donation-manager-mappings/donation-managers`,
+  donationManagersBySubcategory: (subcategoryId: string) =>
+    `${BASE_URL}/api/donation-manager-mappings/subcategory/${subcategoryId}/donation-managers`,
 };
 
 export const ENV = Config?.ENV || 'development';

@@ -53,6 +53,13 @@ export type CreateExpensePayload = {
   status?: 'approved' | 'pending' | 'rejected';
 };
 
+export type UpdateExpensePayload = Partial<
+  Pick<
+    CreateExpensePayload,
+    'expense_title' | 'expense_description' | 'amount' | 'payment_method' | 'transaction_id' | 'status'
+  >
+>;
+
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const { getStoredToken } = await import('../storage/userRealm');
   const token = await getStoredToken();
@@ -127,6 +134,45 @@ export const ExpenseService = {
 
     if (!response.ok) {
       throw new Error(data.message || 'Failed to fetch expenses');
+    }
+
+    return data;
+  },
+
+  updateExpense: async (id: string, payload: UpdateExpensePayload): Promise<ExpenseDetailResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.expenseById(id), {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    const data: ExpenseDetailResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update expense');
+    }
+
+    return data;
+  },
+
+  deleteExpense: async (id: string): Promise<ExpenseDetailResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.expenseById(id), {
+      method: 'DELETE',
+      headers,
+    });
+
+    const text = await response.text();
+    const data: ExpenseDetailResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to delete expense');
     }
 
     return data;
