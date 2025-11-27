@@ -2,9 +2,13 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   FlatList,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
   RefreshControl,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
@@ -21,6 +25,7 @@ import {
 } from '../services/donations';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
+import { useAuth } from '../context/AuthContext';
 
 const formatCurrency = (value?: number) => {
   if (value === undefined || value === null || Number.isNaN(value)) {
@@ -31,10 +36,31 @@ const formatCurrency = (value?: number) => {
 
 export const DonationScreen = () => {
   const navigation = useNavigation<NativeStackNavigationProp<DonationStackParamList>>();
+  const { currentUser } = useAuth();
   const [categories, setCategories] = useState<DonationCategorySummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [categoryModalVisible, setCategoryModalVisible] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [categorySubmitting, setCategorySubmitting] = useState(false);
+  const [subcategoryModal, setSubcategoryModal] = useState<{
+    visible: boolean;
+    categoryId: string | null;
+    categoryName: string;
+  }>({ visible: false, categoryId: null, categoryName: '' });
+  const [subcategoryTitle, setSubcategoryTitle] = useState('');
+  const [subcategoryDescription, setSubcategoryDescription] = useState('');
+  const [subcategoryType, setSubcategoryType] = useState<'open_donation' | 'specific_amount'>('open_donation');
+  const [subcategoryAmount, setSubcategoryAmount] = useState('');
+  const [subcategorySubmitting, setSubcategorySubmitting] = useState(false);
+
+  const isAdminUser = useMemo(() => {
+    if (!currentUser?.role) {
+      return false;
+    }
+    return currentUser.role === 'ADMIN' || currentUser.role === 'SUB_ADMIN';
+  }, [currentUser?.role]);
 
   const loadSummary = useCallback(async (options?: { isRefresh?: boolean }) => {
     if (!options?.isRefresh) {
@@ -93,6 +119,12 @@ export const DonationScreen = () => {
     return new Date(Math.max(...timestamps)).toLocaleString();
   }, [categories]);
 
+  const isCategorySaveDisabled = !newCategoryName.trim() || categorySubmitting;
+  const isSubcategorySaveDisabled =
+    subcategorySubmitting ||
+    !subcategoryTitle.trim() ||
+    (subcategoryType === 'specific_amount' && !subcategoryAmount.trim());
+
   const handleDonateNow = () => {
     Toast.show({
       type: 'info',
@@ -109,10 +141,112 @@ export const DonationScreen = () => {
       subcategoryTitle: subcategory.title,
       subcategoryDescription: subcategory.description,
       managers: category.managers,
-    subcategoryIncome: subcategory.totalIncome || 0,
-    subcategoryExpense: subcategory.totalExpense || 0,
-    subcategoryNet: subcategory.netAmount || 0,
+      subcategoryIncome: subcategory.totalIncome || 0,
+      subcategoryExpense: subcategory.totalExpense || 0,
+      subcategoryNet: subcategory.netAmount || 0,
     });
+  };
+
+  const resetSubcategoryForm = () => {
+    setSubcategoryTitle('');
+    setSubcategoryDescription('');
+    setSubcategoryType('open_donation');
+    setSubcategoryAmount('');
+  };
+
+  const handleOpenSubcategoryModal = (category: DonationCategorySummary) => {
+    setSubcategoryModal({
+      visible: true,
+      categoryId: category.id,
+      categoryName: category.name,
+    });
+  };
+
+  const closeSubcategoryModal = () => {
+    setSubcategoryModal((prev) => ({ ...prev, visible: false }));
+    resetSubcategoryForm();
+  };
+
+  const closeCategoryModal = () => {
+    setCategoryModalVisible(false);
+    setNewCategoryName('');
+  };
+
+  const handleCategorySubmit = async () => {
+    const trimmedName = newCategoryName.trim();
+    if (!trimmedName) {
+      return;
+    }
+
+    try {
+      setCategorySubmitting(true);
+      const response = await DonationService.createCategory({ name: trimmedName });
+      if (!response.success) {
+        throw new Error(response.message || 'Unable to create category');
+      }
+      Toast.show({ type: 'success', text1: 'Category created', text2: `${trimmedName} is now available.` });
+      setCategoryModalVisible(false);
+      setNewCategoryName('');
+      await loadSummary();
+    } catch (err) {
+      Toast.show({
+        type: 'error',
+        text1: 'Add category failed',
+        text2: err instanceof Error ? err.message : 'Unable to create category',
+      });
+    } finally {
+      setCategorySubmitting(false);
+    }
+  };
+
+  const handleSubcategorySubmit = async () => {
+    if (!subcategoryModal.categoryId) {
+      return;
+    }
+
+    const trimmedTitle = subcategoryTitle.trim();
+    if (!trimmedTitle) {
+      Toast.show({ type: 'error', text1: 'Missing title', text2: 'Give the subcategory a title.' });
+      return;
+    }
+
+    let parsedAmount: number | undefined;
+    if (subcategoryType === 'specific_amount') {
+      parsedAmount = Number(subcategoryAmount);
+      if (!parsedAmount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+        Toast.show({ type: 'error', text1: 'Invalid amount', text2: 'Provide a valid amount for this subcategory.' });
+        return;
+      }
+    }
+
+    try {
+      setSubcategorySubmitting(true);
+      const response = await DonationService.createSubcategory({
+        category_id: subcategoryModal.categoryId,
+        title: trimmedTitle,
+        description: subcategoryDescription.trim() || undefined,
+        type: subcategoryType,
+        amount: parsedAmount,
+      });
+      if (!response.success) {
+        throw new Error(response.message || 'Unable to create subcategory');
+      }
+      Toast.show({
+        type: 'success',
+        text1: 'Subcategory added',
+        text2: `${trimmedTitle} has been added under ${subcategoryModal.categoryName}.`,
+      });
+      closeSubcategoryModal();
+      await loadSummary();
+    } catch (err) {
+      Toast.show({
+        type: 'error',
+        text1: 'Add subcategory failed',
+        text2: err instanceof Error ? err.message : 'Unable to create subcategory',
+      });
+    } finally {
+      setSubcategorySubmitting(false);
+    }
   };
 
   const renderCategory = ({ item }: { item: DonationCategorySummary }) => {
@@ -186,6 +320,16 @@ export const DonationScreen = () => {
             <Text style={styles.emptySubcategoriesText}>No subcategories recorded yet</Text>
           </View>
         )}
+
+        {isAdminUser ? (
+          <TouchableOpacity
+            style={styles.addSubcategoryTrigger}
+            onPress={() => handleOpenSubcategoryModal(item)}
+            activeOpacity={0.85}>
+            <Icon name="plus-circle" size={16} color={colors.primary} />
+            <Text style={styles.addSubcategoryTriggerText}>Add subcategory</Text>
+          </TouchableOpacity>
+        ) : null}
       </View>
     );
   };
@@ -257,6 +401,136 @@ export const DonationScreen = () => {
         }
         showsVerticalScrollIndicator={false}
       />
+
+      {isAdminUser ? (
+        <TouchableOpacity style={styles.fab} onPress={() => setCategoryModalVisible(true)} activeOpacity={0.9}>
+          <Icon name="plus" size={18} color="#fff" />
+          <Text style={styles.fabText}>Category</Text>
+        </TouchableOpacity>
+      ) : null}
+
+      <Modal visible={categoryModalVisible} animationType="slide" transparent onRequestClose={closeCategoryModal}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalKeyboardWrapper}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Add category</Text>
+              <Text style={styles.modalSubtitle}>Create a new donation bucket for your upcoming needs.</Text>
+              <Text style={styles.modalLabel}>Category name</Text>
+              <TextInput
+                value={newCategoryName}
+                onChangeText={setNewCategoryName}
+                style={styles.modalInput}
+                placeholder="Education fund"
+                placeholderTextColor={colors.textMuted}
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={closeCategoryModal}
+                  disabled={categorySubmitting}>
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modalButton,
+                    styles.modalButtonPrimary,
+                    isCategorySaveDisabled && styles.modalButtonDisabled,
+                  ]}
+                  onPress={handleCategorySubmit}
+                  disabled={isCategorySaveDisabled}>
+                  <Text style={styles.modalButtonPrimaryText}>
+                    {categorySubmitting ? 'Saving...' : 'Save'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      <Modal
+        visible={subcategoryModal.visible}
+        animationType="slide"
+        transparent
+        onRequestClose={closeSubcategoryModal}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalKeyboardWrapper}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Add subcategory</Text>
+              <Text style={styles.modalSubtitle}>
+                Attach a subcategory to {subcategoryModal.categoryName || 'this category'}.
+              </Text>
+              <Text style={styles.modalLabel}>Title</Text>
+              <TextInput
+                value={subcategoryTitle}
+                onChangeText={setSubcategoryTitle}
+                style={styles.modalInput}
+                placeholder="Annual Scholarship"
+                placeholderTextColor={colors.textMuted}
+              />
+              <Text style={styles.modalLabel}>Description (optional)</Text>
+              <TextInput
+                value={subcategoryDescription}
+                onChangeText={setSubcategoryDescription}
+                style={[styles.modalInput, styles.modalInputMultiline]}
+                placeholder="Who does this support?"
+                placeholderTextColor={colors.textMuted}
+                multiline
+                numberOfLines={3}
+              />
+              <Text style={styles.modalLabel}>Donation type</Text>
+              <View style={styles.typeSelector}>
+                {(['open_donation', 'specific_amount'] as const).map((type) => (
+                  <TouchableOpacity
+                    key={type}
+                    style={[styles.typeOption, subcategoryType === type && styles.typeOptionActive]}
+                    onPress={() => setSubcategoryType(type)}
+                    activeOpacity={0.9}>
+                    <Text
+                      style={[styles.typeOptionText, subcategoryType === type && styles.typeOptionTextActive]}>
+                      {type === 'open_donation' ? 'Open donation' : 'Specific amount'}
+                    </Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+              {subcategoryType === 'specific_amount' ? (
+                <>
+                  <Text style={styles.modalLabel}>Fixed amount</Text>
+                  <TextInput
+                    value={subcategoryAmount}
+                    onChangeText={setSubcategoryAmount}
+                    style={styles.modalInput}
+                    placeholder="1000"
+                    placeholderTextColor={colors.textMuted}
+                    keyboardType="numeric"
+                  />
+                </>
+              ) : null}
+              <View style={styles.modalActions}>
+                <TouchableOpacity style={styles.modalButton} onPress={closeSubcategoryModal} disabled={subcategorySubmitting}>
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modalButton,
+                    styles.modalButtonPrimary,
+                    isSubcategorySaveDisabled && styles.modalButtonDisabled,
+                  ]}
+                  onPress={handleSubcategorySubmit}
+                  disabled={isSubcategorySaveDisabled}>
+                  <Text style={styles.modalButtonPrimaryText}>
+                    {subcategorySubmitting ? 'Saving...' : 'Save'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -566,6 +840,140 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 13,
     color: colors.textMuted,
+  },
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 30,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 18,
+    paddingVertical: 12,
+    borderRadius: 999,
+    backgroundColor: colors.primary,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.2,
+    shadowRadius: 6,
+    elevation: 6,
+  },
+  fabText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.4)',
+    justifyContent: 'center',
+    padding: 20,
+  },
+  modalKeyboardWrapper: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  modalContent: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 20,
+    gap: 12,
+  },
+  modalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: colors.text,
+  },
+  modalSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  modalLabel: {
+    marginTop: 6,
+    fontFamily: fonts.heading,
+    fontSize: 13,
+    color: colors.text,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: colors.border ?? '#E5E7EB',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  modalInputMultiline: {
+    minHeight: 80,
+    textAlignVertical: 'top',
+  },
+  typeSelector: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  typeOption: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: colors.border ?? '#E5E7EB',
+    borderRadius: 10,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  typeOptionActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '10',
+  },
+  typeOptionText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  typeOptionTextActive: {
+    color: colors.primary,
+    fontFamily: fonts.heading,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 10,
+    marginTop: 6,
+  },
+  modalButton: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: colors.border ?? '#E5E7EB',
+  },
+  modalButtonPrimary: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary,
+  },
+  modalButtonDisabled: {
+    opacity: 0.5,
+  },
+  modalButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 13,
+    color: colors.text,
+  },
+  modalButtonPrimaryText: {
+    fontFamily: fonts.heading,
+    fontSize: 13,
+    color: '#fff',
+  },
+  addSubcategoryTrigger: {
+    marginTop: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  addSubcategoryTriggerText: {
+    fontFamily: fonts.heading,
+    fontSize: 13,
+    color: colors.primary,
   },
 });
 

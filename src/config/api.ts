@@ -43,6 +43,10 @@ export const endpoints = {
   donations: `${BASE_URL}/api/donations`,
   donationById: (id: string) => `${BASE_URL}/api/donations/${id}`,
   donationCategoriesSummary: `${BASE_URL}/api/donations/categories-summary`,
+  categories: `${BASE_URL}/api/categories`,
+  categoryById: (id: string) => `${BASE_URL}/api/categories/${id}`,
+  subcategories: `${BASE_URL}/api/subcategories`,
+  subcategoryById: (id: string) => `${BASE_URL}/api/subcategories/${id}`,
   // Expense endpoints
   expenses: `${BASE_URL}/api/expenses`,
   expenseById: (id: string) => `${BASE_URL}/api/expenses/${id}`,
@@ -51,6 +55,11 @@ export const endpoints = {
   donationManagers: `${BASE_URL}/api/donation-manager-mappings/donation-managers`,
   donationManagersBySubcategory: (subcategoryId: string) =>
     `${BASE_URL}/api/donation-manager-mappings/subcategory/${subcategoryId}/donation-managers`,
+  // User donation endpoints
+  userDonationsByCategory: (userIdOrPhone: string, categoryId: string) =>
+    `${BASE_URL}/api/donations/user/${userIdOrPhone}/category/${categoryId}`,
+  userDonationsOverall: (userIdOrPhone: string) =>
+    `${BASE_URL}/api/donations/user/${userIdOrPhone}/overall`,
 };
 
 export const ENV = Config?.ENV || 'development';

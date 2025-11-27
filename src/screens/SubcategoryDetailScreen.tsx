@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -21,7 +22,12 @@ import Toast from 'react-native-toast-message';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import { DonationStackParamList } from '../navigation/DonationNavigator';
-import { DonationService, type DonationRecord } from '../services/donations';
+import {
+  DonationService,
+  type DonationRecord,
+  type UserDonationRecord,
+  type UserDonationSummary,
+} from '../services/donations';
 import { ExpenseService, type ExpenseRecord } from '../services/expenses';
 import {
   DonationManagerMappingService,
@@ -65,6 +71,15 @@ const formatDateForDisplay = (date: Date | null): string => {
 const generateOfflineTxnId = () => {
   const random = Math.floor(1000 + Math.random() * 9000);
   return `OFFLINE-TXN-${Date.now()}-${random}`;
+};
+
+const getInitials = (name: string): string => {
+  if (!name || name.trim().length === 0) return '?';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) {
+    return parts[0].charAt(0).toUpperCase();
+  }
+  return (parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
 };
 
 export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
@@ -161,6 +176,39 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const [showEndDatePicker, setShowEndDatePicker] = useState(false);
   const [showFilters, setShowFilters] = useState(false);
 
+  // User donations modal states
+  const [donationModalVisible, setDonationModalVisible] = useState(false);
+  const [donationModalTab, setDonationModalTab] = useState<'category' | 'overall'>('category');
+  const [userDonationsCategory, setUserDonationsCategory] = useState<UserDonationRecord[]>([]);
+  const [userDonationsOverall, setUserDonationsOverall] = useState<UserDonationRecord[]>([]);
+  const [userDonationsCategorySummary, setUserDonationsCategorySummary] = useState<UserDonationSummary | null>(null);
+  const [userDonationsOverallSummary, setUserDonationsOverallSummary] = useState<UserDonationSummary | null>(null);
+  const [userDonationsLoading, setUserDonationsLoading] = useState(false);
+  const [userDonationsCategoryPage, setUserDonationsCategoryPage] = useState(1);
+  const [userDonationsOverallPage, setUserDonationsOverallPage] = useState(1);
+  const [userDonationsCategoryHasMore, setUserDonationsCategoryHasMore] = useState(true);
+  const [userDonationsOverallHasMore, setUserDonationsOverallHasMore] = useState(true);
+  const [userDonationsCategoryLoadingMore, setUserDonationsCategoryLoadingMore] = useState(false);
+  const [userDonationsOverallLoadingMore, setUserDonationsOverallLoadingMore] = useState(false);
+  const [userDonationPhone, setUserDonationPhone] = useState('');
+  const [userDonationStartDate, setUserDonationStartDate] = useState<Date | null>(null);
+  const [userDonationEndDate, setUserDonationEndDate] = useState<Date | null>(null);
+  const [userDonationPaymentStatus, setUserDonationPaymentStatus] = useState<'pending' | 'success' | 'failed' | 'all'>('all');
+  const [userDonationSortBy, setUserDonationSortBy] = useState<'amount' | 'date'>('date');
+  const [userDonationSortOrder, setUserDonationSortOrder] = useState<'asc' | 'desc'>('desc');
+  const [showUserDonationStartDatePicker, setShowUserDonationStartDatePicker] = useState(false);
+  const [showUserDonationEndDatePicker, setShowUserDonationEndDatePicker] = useState(false);
+  const [showUserDonationFilters, setShowUserDonationFilters] = useState(false);
+  const [donorProfileModalVisible, setDonorProfileModalVisible] = useState(false);
+  const [donorAvatarModalVisible, setDonorAvatarModalVisible] = useState(false);
+  const [selectedDonor, setSelectedDonor] = useState<{
+    name: string;
+    phone: string;
+    avatar?: string;
+    fatherName?: string;
+    address?: string;
+  } | null>(null);
+
   const canManageSubcategory = useMemo(() => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
       console.log('canManageSubcategory: false - not management user');
@@ -195,6 +243,11 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     console.log('canManageSubcategory: false - role not matched');
     return false;
   }, [currentUser, managers, subcategoryManagers]);
+
+  const canViewStatusFilters = useMemo(() => {
+    // Admin, Sub-Admin, or mapped Donation Manager can see status filters
+    return canManageSubcategory;
+  }, [canManageSubcategory]);
 
   // Management viewers (see all statuses) vs normal users (see only approved/success)
   const isManagementViewer = useMemo(() => {
@@ -521,6 +574,281 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       text2: 'Razorpay flow coming soon!',
     });
   };
+
+  const handleViewDonorDonations = (donation: DonationRecord) => {
+    const anyItem: any = donation;
+    // Extract phone number from donation - could be in donor.phone, donor_phone, or donor_id.phone
+    const donorPhone =
+      donation.donor?.phone ||
+      anyItem.donor_phone ||
+      anyItem.donor_id?.phone ||
+      '';
+    
+    if (!donorPhone) {
+      Toast.show({
+        type: 'error',
+        text1: 'Phone number not found',
+        text2: 'This donation does not have a phone number associated.',
+      });
+      return;
+    }
+
+    // Extract donor information - check multiple possible locations
+    const donorName =
+      donation.donor?.name ||
+      anyItem.donor?.name ||
+      anyItem.donor_id?.name ||
+      anyItem.Donor_name ||
+      'Anonymous';
+    const donorAvatar =
+      anyItem.donor?.avatar ||
+      anyItem.donor_id?.avatar ||
+      (donation.donor as any)?.avatar;
+    const donorFatherName =
+      anyItem.donor_father_name ||
+      anyItem.donor?.father_name ||
+      anyItem.donor_id?.father_name;
+    const donorAddress =
+      anyItem.donor_address ||
+      donation.donor?.address ||
+      anyItem.donor?.address ||
+      anyItem.donor_id?.address;
+
+    // Reset all state for new donor
+    setUserDonationPhone(donorPhone);
+    setUserDonationsCategoryPage(1);
+    setUserDonationsOverallPage(1);
+    setUserDonationsCategory([]);
+    setUserDonationsOverall([]);
+    setUserDonationsCategorySummary(null);
+    setUserDonationsOverallSummary(null);
+    setUserDonationsCategoryHasMore(true);
+    setUserDonationsOverallHasMore(true);
+    setDonationModalTab('category');
+    
+    // Reset filters
+    setUserDonationStartDate(null);
+    setUserDonationEndDate(null);
+    setUserDonationPaymentStatus('all');
+    setUserDonationSortBy('date');
+    setUserDonationSortOrder('desc');
+    setShowUserDonationFilters(false);
+
+    // Store donor information for profile view (will be updated from API response)
+    setSelectedDonor({
+      name: donorName,
+      phone: donorPhone,
+      avatar: donorAvatar,
+      fatherName: donorFatherName,
+      address: donorAddress,
+    });
+
+    setDonationModalVisible(true);
+    // Fetch immediately with the phone number
+    fetchUserDonations('category', 1, true, donorPhone);
+  };
+
+  const handleOpenDonorProfile = (donation: UserDonationRecord) => {
+    const donor = donation.donor;
+    if (donor) {
+      setSelectedDonor({
+        name: donor.name || 'Anonymous',
+        phone: donor.phone || '',
+        avatar: donor.avatar,
+        fatherName: donor.father_name,
+        address: donor.address,
+      });
+      setDonorProfileModalVisible(true);
+    }
+  };
+
+  const fetchUserDonations = async (
+    type: 'category' | 'overall',
+    page: number = 1,
+    reset: boolean = false,
+    phoneOverride?: string,
+  ) => {
+    const phoneToUse = phoneOverride || userDonationPhone;
+    if (!phoneToUse.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Phone number required',
+        text2: 'Please enter a phone number to fetch donations.',
+      });
+      return;
+    }
+
+    if (reset) {
+      setUserDonationsLoading(true);
+    } else {
+      if (type === 'category') {
+        setUserDonationsCategoryLoadingMore(true);
+      } else {
+        setUserDonationsOverallLoadingMore(true);
+      }
+    }
+
+    try {
+      const params: any = {
+        page,
+        limit: 10,
+      };
+
+      if (userDonationStartDate) {
+        params.startDate = formatDateForAPI(userDonationStartDate);
+      }
+      if (userDonationEndDate) {
+        params.endDate = formatDateForAPI(userDonationEndDate);
+      }
+      // Only send payment_status filter if user can view status filters
+      if (canViewStatusFilters && userDonationPaymentStatus !== 'all') {
+        params.payment_status = userDonationPaymentStatus;
+      }
+
+      if (type === 'category') {
+        const response = await DonationService.getUserDonationsByCategory(phoneToUse, categoryId, params);
+        if (response.success && response.data) {
+          if (reset) {
+            setUserDonationsCategory(response.data.donations);
+            setUserDonationsCategorySummary(response.data.summary);
+            // Update selectedDonor with actual donor info from API response
+            if (response.data.donations.length > 0 && response.data.donations[0].donor) {
+              const donor = response.data.donations[0].donor;
+              setSelectedDonor({
+                name: donor.name || 'Anonymous',
+                phone: donor.phone || userDonationPhone,
+                avatar: donor.avatar,
+                fatherName: donor.father_name,
+                address: donor.address,
+              });
+            }
+          } else {
+            setUserDonationsCategory((prev) => [...prev, ...response.data!.donations]);
+          }
+          setUserDonationsCategoryPage(page);
+          setUserDonationsCategoryHasMore(page < response.data.pagination.totalPages);
+        }
+      } else {
+        const response = await DonationService.getUserDonationsOverall(phoneToUse, params);
+        if (response.success && response.data) {
+          if (reset) {
+            setUserDonationsOverall(response.data.donations);
+            setUserDonationsOverallSummary(response.data.summary);
+            // Update selectedDonor with actual donor info from API response
+            if (response.data.donations.length > 0 && response.data.donations[0].donor) {
+              const donor = response.data.donations[0].donor;
+              setSelectedDonor({
+                name: donor.name || 'Anonymous',
+                phone: donor.phone || userDonationPhone,
+                avatar: donor.avatar,
+                fatherName: donor.father_name,
+                address: donor.address,
+              });
+            }
+          } else {
+            setUserDonationsOverall((prev) => [...prev, ...response.data!.donations]);
+          }
+          setUserDonationsOverallPage(page);
+          setUserDonationsOverallHasMore(page < response.data.pagination.totalPages);
+        }
+      }
+    } catch (err) {
+      Toast.show({
+        type: 'error',
+        text1: 'Unable to fetch donations',
+        text2: err instanceof Error ? err.message : 'Please try again later.',
+      });
+    } finally {
+      if (reset) {
+        setUserDonationsLoading(false);
+      } else {
+        if (type === 'category') {
+          setUserDonationsCategoryLoadingMore(false);
+        } else {
+          setUserDonationsOverallLoadingMore(false);
+        }
+      }
+    }
+  };
+
+  const handleUserDonationTabChange = (tab: 'category' | 'overall') => {
+    setDonationModalTab(tab);
+    if (tab === 'category' && userDonationsCategory.length === 0) {
+      fetchUserDonations('category', 1, true);
+    } else if (tab === 'overall' && userDonationsOverall.length === 0) {
+      fetchUserDonations('overall', 1, true);
+    }
+  };
+
+  const handleApplyUserDonationFilters = () => {
+    setUserDonationsCategoryPage(1);
+    setUserDonationsOverallPage(1);
+    setUserDonationsCategory([]);
+    setUserDonationsOverall([]);
+    if (donationModalTab === 'category') {
+      fetchUserDonations('category', 1, true);
+    } else {
+      fetchUserDonations('overall', 1, true);
+    }
+  };
+
+  const handleClearUserDonationFilters = () => {
+    setUserDonationStartDate(null);
+    setUserDonationEndDate(null);
+    setUserDonationPaymentStatus('all');
+    setUserDonationSortBy('date');
+    setUserDonationSortOrder('desc');
+  };
+
+  const handleUserDonationStartDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowUserDonationStartDatePicker(false);
+    }
+    if (selectedDate) {
+      setUserDonationStartDate(selectedDate);
+    }
+  };
+
+  const handleUserDonationEndDateChange = (event: any, selectedDate?: Date) => {
+    if (Platform.OS === 'android') {
+      setShowUserDonationEndDatePicker(false);
+    }
+    if (selectedDate) {
+      setUserDonationEndDate(selectedDate);
+    }
+  };
+
+  const sortedUserDonationsCategory = useMemo(() => {
+    const sorted = [...userDonationsCategory];
+    sorted.sort((a, b) => {
+      let comparison = 0;
+      if (userDonationSortBy === 'amount') {
+        comparison = a.amount - b.amount;
+      } else {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        comparison = dateA - dateB;
+      }
+      return userDonationSortOrder === 'asc' ? comparison : -comparison;
+    });
+    return sorted;
+  }, [userDonationsCategory, userDonationSortBy, userDonationSortOrder]);
+
+  const sortedUserDonationsOverall = useMemo(() => {
+    const sorted = [...userDonationsOverall];
+    sorted.sort((a, b) => {
+      let comparison = 0;
+      if (userDonationSortBy === 'amount') {
+        comparison = a.amount - b.amount;
+      } else {
+        const dateA = new Date(a.createdAt).getTime();
+        const dateB = new Date(b.createdAt).getTime();
+        comparison = dateA - dateB;
+      }
+      return userDonationSortOrder === 'asc' ? comparison : -comparison;
+    });
+    return sorted;
+  }, [userDonationsOverall, userDonationSortBy, userDonationSortOrder]);
 
   const handleApplyFilters = async () => {
     // Refetch data when date filters are applied (sorting is handled client-side via useMemo)
@@ -1039,9 +1367,30 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
           const showActions = canManageSubcategory && item.payment_method === 'offline';
 
+          const anyItemForPhone: any = item;
+          const donorPhone =
+            item.donor?.phone ||
+            anyItemForPhone.donor_phone ||
+            anyItemForPhone.donor_id?.phone ||
+            '';
+
           return (
             <View key={item.id}>
-              <View style={styles.itemRow}>
+              <TouchableOpacity
+                style={styles.itemRow}
+                onPress={() => {
+                  if (donorPhone) {
+                    handleViewDonorDonations(item);
+                  } else {
+                    Toast.show({
+                      type: 'info',
+                      text1: 'No phone number',
+                      text2: 'This donation does not have a phone number to view donor history.',
+                    });
+                  }
+                }}
+                activeOpacity={0.7}
+                disabled={!donorPhone}>
                 <View style={styles.itemInfo}>
                   <Text style={styles.itemTitle}>{donorName}</Text>
                   {!!fatherName && (
@@ -1070,13 +1419,16 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                   {showActions && (
                     <TouchableOpacity
                       style={styles.moreButton}
-                      onPress={() => handleDonationActions(item)}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        handleDonationActions(item);
+                      }}
                       hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
                       <Icon name="ellipsis-v" size={16} color={colors.textMuted} />
                     </TouchableOpacity>
                   )}
                 </View>
-              </View>
+              </TouchableOpacity>
               {index !== sortedDonations.length - 1 && <View style={styles.itemDivider} />}
             </View>
           );
@@ -2017,6 +2369,575 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         </View>
       </Modal>
 
+      {/* User Donations Modal */}
+      <Modal
+        visible={donationModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setDonationModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={[styles.modalContainer, styles.userDonationModalContainer]}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Donor Donations</Text>
+              <TouchableOpacity onPress={() => setDonationModalVisible(false)}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {selectedDonor && (
+              <View style={styles.donorProfileHeader}>
+                <TouchableOpacity
+                  style={styles.donorProfileAvatarContainer}
+                  onPress={() => {
+                    if (selectedDonor.avatar) {
+                      setDonorAvatarModalVisible(true);
+                    }
+                  }}
+                  activeOpacity={0.7}>
+                  {selectedDonor.avatar ? (
+                    <Image
+                      source={{ uri: selectedDonor.avatar }}
+                      style={styles.donorProfileAvatar}
+                    />
+                  ) : (
+                    <View style={styles.donorProfileAvatarPlaceholder}>
+                      <Text style={styles.donorProfileAvatarText}>
+                        {getInitials(selectedDonor.name)}
+                      </Text>
+                    </View>
+                  )}
+                </TouchableOpacity>
+                <View style={styles.donorProfileInfo}>
+                  <Text style={styles.donorProfileName}>{selectedDonor.name}</Text>
+                  {selectedDonor.fatherName && (
+                    <View style={styles.donorProfileInfoRow}>
+                      <Icon name="user-o" size={12} color={colors.textMuted} />
+                      <Text style={styles.donorProfileInfoText}>Father: {selectedDonor.fatherName}</Text>
+                    </View>
+                  )}
+                  {selectedDonor.address && (
+                    <View style={styles.donorProfileInfoRow}>
+                      <Icon name="map-marker" size={12} color={colors.textMuted} />
+                      <Text style={styles.donorProfileInfoText} numberOfLines={2}>
+                        {selectedDonor.address}
+                      </Text>
+                    </View>
+                  )}
+                </View>
+              </View>
+            )}
+
+            <View style={styles.tabRow}>
+              <TouchableOpacity
+                style={[styles.tabButton, donationModalTab === 'category' && styles.tabButtonActive]}
+                onPress={() => handleUserDonationTabChange('category')}>
+                <Text style={[styles.tabLabel, donationModalTab === 'category' && styles.tabLabelActive]}>
+                  Category Donation
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.tabButton, donationModalTab === 'overall' && styles.tabButtonActive]}
+                onPress={() => handleUserDonationTabChange('overall')}>
+                <Text style={[styles.tabLabel, donationModalTab === 'overall' && styles.tabLabelActive]}>
+                  Overall Donation
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <TouchableOpacity
+              style={styles.filterToggle}
+              onPress={() => setShowUserDonationFilters(!showUserDonationFilters)}
+              activeOpacity={0.7}>
+              <Icon name={showUserDonationFilters ? 'chevron-up' : 'chevron-down'} size={14} color={colors.text} />
+              <Text style={styles.filterToggleText}>Filters & Sort</Text>
+              {(userDonationStartDate ||
+                userDonationEndDate ||
+                (canViewStatusFilters && userDonationPaymentStatus !== 'all') ||
+                userDonationSortBy !== 'date' ||
+                userDonationSortOrder !== 'desc') && (
+                <View style={styles.filterBadge}>
+                  <Text style={styles.filterBadgeText}>Active</Text>
+                </View>
+              )}
+            </TouchableOpacity>
+
+            {showUserDonationFilters && (
+              <View style={styles.filterContainer}>
+                <View style={styles.filterRow}>
+                  <View style={styles.filterGroup}>
+                    <Text style={styles.filterLabel}>Start date</Text>
+                    <TouchableOpacity
+                      style={styles.dateInput}
+                      onPress={() => setShowUserDonationStartDatePicker(true)}
+                      activeOpacity={0.7}>
+                      <Text
+                        style={[
+                          styles.dateInputText,
+                          !userDonationStartDate && styles.dateInputPlaceholder,
+                        ]}>
+                        {userDonationStartDate ? formatDateForDisplay(userDonationStartDate) : 'Select start date'}
+                      </Text>
+                      <Icon name="calendar" size={14} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                  <View style={styles.filterGroup}>
+                    <Text style={styles.filterLabel}>End date</Text>
+                    <TouchableOpacity
+                      style={styles.dateInput}
+                      onPress={() => setShowUserDonationEndDatePicker(true)}
+                      activeOpacity={0.7}>
+                      <Text
+                        style={[styles.dateInputText, !userDonationEndDate && styles.dateInputPlaceholder]}>
+                        {userDonationEndDate ? formatDateForDisplay(userDonationEndDate) : 'Select end date'}
+                      </Text>
+                      <Icon name="calendar" size={14} color={colors.textMuted} />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+
+                {canViewStatusFilters && (
+                  <View style={styles.filterRow}>
+                    <View style={styles.filterGroup}>
+                      <Text style={styles.filterLabel}>Payment status</Text>
+                      <View style={styles.chipRow}>
+                        {(['all', 'success', 'pending', 'failed'] as const).map((status) => (
+                          <TouchableOpacity
+                            key={status}
+                            style={[
+                              styles.chip,
+                              userDonationPaymentStatus === status && styles.chipActive,
+                            ]}
+                            onPress={() => setUserDonationPaymentStatus(status)}
+                            activeOpacity={0.7}>
+                            <Text
+                              style={[
+                                styles.chipText,
+                                userDonationPaymentStatus === status && styles.chipTextActive,
+                              ]}>
+                              {status.toUpperCase()}
+                            </Text>
+                          </TouchableOpacity>
+                        ))}
+                      </View>
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.filterRow}>
+                  <View style={styles.filterGroup}>
+                    <Text style={styles.filterLabel}>Sort by</Text>
+                    <View style={styles.chipRow}>
+                      <TouchableOpacity
+                        style={[styles.chip, userDonationSortBy === 'date' && styles.chipActive]}
+                        onPress={() => setUserDonationSortBy('date')}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            userDonationSortBy === 'date' && styles.chipTextActive,
+                          ]}>
+                          Date
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.chip, userDonationSortBy === 'amount' && styles.chipActive]}
+                        onPress={() => setUserDonationSortBy('amount')}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            userDonationSortBy === 'amount' && styles.chipTextActive,
+                          ]}>
+                          Amount
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                  <View style={styles.filterGroup}>
+                    <Text style={styles.filterLabel}>Order</Text>
+                    <View style={styles.chipRow}>
+                      <TouchableOpacity
+                        style={[styles.chip, userDonationSortOrder === 'asc' && styles.chipActive]}
+                        onPress={() => setUserDonationSortOrder('asc')}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            userDonationSortOrder === 'asc' && styles.chipTextActive,
+                          ]}>
+                          Asc
+                        </Text>
+                      </TouchableOpacity>
+                      <TouchableOpacity
+                        style={[styles.chip, userDonationSortOrder === 'desc' && styles.chipActive]}
+                        onPress={() => setUserDonationSortOrder('desc')}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            userDonationSortOrder === 'desc' && styles.chipTextActive,
+                          ]}>
+                          Desc
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.filterActions}>
+                  <TouchableOpacity
+                    style={styles.filterClearButton}
+                    onPress={handleClearUserDonationFilters}
+                    activeOpacity={0.7}>
+                    <Text style={styles.filterClearText}>Clear</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.filterApplyButton}
+                    onPress={handleApplyUserDonationFilters}
+                    activeOpacity={0.7}>
+                    <Text style={styles.filterApplyText}>Apply</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {donationModalTab === 'category' && userDonationsCategorySummary && (
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryCardTitle}>Summary</Text>
+                {canViewStatusFilters ? (
+                  <View style={styles.summaryRow}>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Total</Text>
+                      <Text style={styles.summaryValue}>{userDonationsCategorySummary.totalDonations}</Text>
+                      <Text style={styles.summaryAmount}>{formatCurrency(userDonationsCategorySummary.totalAmount)}</Text>
+                    </View>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Success</Text>
+                      <Text style={styles.summaryValue}>{userDonationsCategorySummary.successCount}</Text>
+                      <Text style={[styles.summaryAmount, styles.summaryAmountSuccess]}>
+                        {formatCurrency(userDonationsCategorySummary.successAmount)}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Pending</Text>
+                      <Text style={styles.summaryValue}>{userDonationsCategorySummary.pendingCount}</Text>
+                      <Text style={[styles.summaryAmount, styles.summaryAmountPending]}>
+                        {formatCurrency(userDonationsCategorySummary.pendingAmount)}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Failed</Text>
+                      <Text style={styles.summaryValue}>{userDonationsCategorySummary.failedCount}</Text>
+                      <Text style={[styles.summaryAmount, styles.summaryAmountFailed]}>
+                        {formatCurrency(userDonationsCategorySummary.failedAmount)}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.summaryRow}>
+                    <View style={[styles.summaryItem, styles.summaryItemFull]}>
+                      <Text style={styles.summaryLabel}>Total Donations</Text>
+                      <Text style={styles.summaryValue}>{userDonationsCategorySummary.totalDonations}</Text>
+                      <Text style={styles.summaryAmount}>{formatCurrency(userDonationsCategorySummary.totalAmount)}</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            {donationModalTab === 'overall' && userDonationsOverallSummary && (
+              <View style={styles.summaryCard}>
+                <Text style={styles.summaryCardTitle}>Summary</Text>
+                {canViewStatusFilters ? (
+                  <View style={styles.summaryRow}>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Total</Text>
+                      <Text style={styles.summaryValue}>{userDonationsOverallSummary.totalDonations}</Text>
+                      <Text style={styles.summaryAmount}>{formatCurrency(userDonationsOverallSummary.totalAmount)}</Text>
+                    </View>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Success</Text>
+                      <Text style={styles.summaryValue}>{userDonationsOverallSummary.successCount}</Text>
+                      <Text style={[styles.summaryAmount, styles.summaryAmountSuccess]}>
+                        {formatCurrency(userDonationsOverallSummary.successAmount)}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Pending</Text>
+                      <Text style={styles.summaryValue}>{userDonationsOverallSummary.pendingCount}</Text>
+                      <Text style={[styles.summaryAmount, styles.summaryAmountPending]}>
+                        {formatCurrency(userDonationsOverallSummary.pendingAmount)}
+                      </Text>
+                    </View>
+                    <View style={styles.summaryItem}>
+                      <Text style={styles.summaryLabel}>Failed</Text>
+                      <Text style={styles.summaryValue}>{userDonationsOverallSummary.failedCount}</Text>
+                      <Text style={[styles.summaryAmount, styles.summaryAmountFailed]}>
+                        {formatCurrency(userDonationsOverallSummary.failedAmount)}
+                      </Text>
+                    </View>
+                  </View>
+                ) : (
+                  <View style={styles.summaryRow}>
+                    <View style={[styles.summaryItem, styles.summaryItemFull]}>
+                      <Text style={styles.summaryLabel}>Total Donations</Text>
+                      <Text style={styles.summaryValue}>{userDonationsOverallSummary.totalDonations}</Text>
+                      <Text style={styles.summaryAmount}>{formatCurrency(userDonationsOverallSummary.totalAmount)}</Text>
+                    </View>
+                  </View>
+                )}
+              </View>
+            )}
+
+            <ScrollView
+              style={styles.userDonationList}
+              showsVerticalScrollIndicator={false}
+              onScroll={(event) => {
+                const { layoutMeasurement, contentOffset, contentSize } = event.nativeEvent;
+                const threshold = 80;
+                const isNearBottom =
+                  layoutMeasurement.height + contentOffset.y >= contentSize.height - threshold;
+                if (isNearBottom) {
+                  if (donationModalTab === 'category' && userDonationsCategoryHasMore && !userDonationsCategoryLoadingMore) {
+                    fetchUserDonations('category', userDonationsCategoryPage + 1, false);
+                  } else if (
+                    donationModalTab === 'overall' &&
+                    userDonationsOverallHasMore &&
+                    !userDonationsOverallLoadingMore
+                  ) {
+                    fetchUserDonations('overall', userDonationsOverallPage + 1, false);
+                  }
+                }
+              }}
+              scrollEventThrottle={16}>
+              {userDonationsLoading ? (
+                <View style={styles.loader}>
+                  <ActivityIndicator size="large" color={colors.primary} />
+                  <Text style={styles.loaderText}>Loading donations...</Text>
+                </View>
+              ) : donationModalTab === 'category' ? (
+                sortedUserDonationsCategory.length > 0 ? (
+                  sortedUserDonationsCategory.map((donation) => {
+                    const donorName = donation.donor?.name || 'Anonymous';
+                    const donorAvatar = donation.donor?.avatar;
+                    return (
+                      <View key={donation.id} style={styles.userDonationItem}>
+                        <View style={styles.userDonationAvatar}>
+                          {donorAvatar ? (
+                            <Image
+                              source={{ uri: donorAvatar }}
+                              style={styles.userDonationAvatarImage}
+                            />
+                          ) : (
+                            <View style={styles.userDonationAvatarPlaceholder}>
+                              <Text style={styles.userDonationAvatarText}>
+                                {getInitials(donorName)}
+                              </Text>
+                            </View>
+                          )}
+                        </View>
+                        <View style={styles.userDonationContent}>
+                          <Text style={styles.userDonationName}>{donorName}</Text>
+                          <Text style={styles.userDonationSubcategory}>{donation.subcategory.title}</Text>
+                          <Text style={styles.userDonationCategory}>{donation.subcategory.category.name}</Text>
+                          <Text style={styles.userDonationDate}>{formatDate(donation.createdAt)}</Text>
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              donation.payment_status === 'success'
+                                ? styles.statusBadgeSuccess
+                                : donation.payment_status === 'pending'
+                                ? styles.statusBadgePending
+                                : styles.statusBadgeFailed,
+                            ]}>
+                            <Text style={styles.statusBadgeText}>{donation.payment_status.toUpperCase()}</Text>
+                          </View>
+                        </View>
+                        <View style={styles.userDonationAmount}>
+                          <Text style={styles.userDonationAmountText}>{formatCurrency(donation.amount)}</Text>
+                          <Text style={styles.userDonationMethod}>{donation.payment_method.toUpperCase()}</Text>
+                        </View>
+                      </View>
+                    );
+                  })
+                ) : (
+                  <View style={styles.emptyList}>
+                    <Icon name="folder-open" size={24} color={colors.textMuted} />
+                    <Text style={styles.emptyListText}>No donations found</Text>
+                  </View>
+                )
+              ) : sortedUserDonationsOverall.length > 0 ? (
+                sortedUserDonationsOverall.map((donation) => {
+                  const donorName = donation.donor?.name || 'Anonymous';
+                  const donorAvatar = donation.donor?.avatar;
+                  return (
+                    <View key={donation.id} style={styles.userDonationItem}>
+                      <TouchableOpacity
+                        style={styles.userDonationAvatar}
+                        onPress={() => handleOpenDonorProfile(donation)}
+                        activeOpacity={0.7}>
+                        {donorAvatar ? (
+                          <Image
+                            source={{ uri: donorAvatar }}
+                            style={styles.userDonationAvatarImage}
+                          />
+                        ) : (
+                          <View style={styles.userDonationAvatarPlaceholder}>
+                            <Text style={styles.userDonationAvatarText}>
+                              {getInitials(donorName)}
+                            </Text>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                      <View style={styles.userDonationContent}>
+                        <Text style={styles.userDonationName}>{donorName}</Text>
+                        <Text style={styles.userDonationSubcategory}>{donation.subcategory.title}</Text>
+                        <Text style={styles.userDonationCategory}>{donation.subcategory.category.name}</Text>
+                        <Text style={styles.userDonationDate}>{formatDate(donation.createdAt)}</Text>
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            donation.payment_status === 'success'
+                              ? styles.statusBadgeSuccess
+                              : donation.payment_status === 'pending'
+                              ? styles.statusBadgePending
+                              : styles.statusBadgeFailed,
+                          ]}>
+                          <Text style={styles.statusBadgeText}>{donation.payment_status.toUpperCase()}</Text>
+                        </View>
+                      </View>
+                      <View style={styles.userDonationAmount}>
+                        <Text style={styles.userDonationAmountText}>{formatCurrency(donation.amount)}</Text>
+                        <Text style={styles.userDonationMethod}>{donation.payment_method.toUpperCase()}</Text>
+                      </View>
+                    </View>
+                  );
+                })
+              ) : (
+                <View style={styles.emptyList}>
+                  <Icon name="folder-open" size={24} color={colors.textMuted} />
+                  <Text style={styles.emptyListText}>No donations found</Text>
+                </View>
+              )}
+              {donationModalTab === 'category' && userDonationsCategoryLoadingMore && (
+                <View style={styles.loadMore}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              )}
+              {donationModalTab === 'overall' && userDonationsOverallLoadingMore && (
+                <View style={styles.loadMore}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                </View>
+              )}
+            </ScrollView>
+
+            {Platform.OS === 'ios' && showUserDonationStartDatePicker && (
+              <Modal visible={showUserDonationStartDatePicker} transparent animationType="slide">
+                <View style={styles.datePickerModal}>
+                  <View style={styles.datePickerContainer}>
+                    <View style={styles.datePickerHeader}>
+                      <TouchableOpacity onPress={() => setShowUserDonationStartDatePicker(false)}>
+                        <Text style={styles.datePickerCancel}>Cancel</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.datePickerTitle}>Select start date</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (!userDonationStartDate) {
+                            setUserDonationStartDate(new Date());
+                          }
+                          setShowUserDonationStartDatePicker(false);
+                        }}>
+                        <Text style={styles.datePickerDone}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <DateTimePicker
+                      value={userDonationStartDate || new Date()}
+                      mode="date"
+                      display="spinner"
+                      onChange={handleUserDonationStartDateChange}
+                      maximumDate={userDonationEndDate || undefined}
+                    />
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            {Platform.OS === 'android' && showUserDonationStartDatePicker && (
+              <DateTimePicker
+                value={userDonationStartDate || new Date()}
+                mode="date"
+                display="default"
+                onChange={handleUserDonationStartDateChange}
+                maximumDate={userDonationEndDate || undefined}
+              />
+            )}
+
+            {Platform.OS === 'ios' && showUserDonationEndDatePicker && (
+              <Modal visible={showUserDonationEndDatePicker} transparent animationType="slide">
+                <View style={styles.datePickerModal}>
+                  <View style={styles.datePickerContainer}>
+                    <View style={styles.datePickerHeader}>
+                      <TouchableOpacity onPress={() => setShowUserDonationEndDatePicker(false)}>
+                        <Text style={styles.datePickerCancel}>Cancel</Text>
+                      </TouchableOpacity>
+                      <Text style={styles.datePickerTitle}>Select end date</Text>
+                      <TouchableOpacity
+                        onPress={() => {
+                          if (!userDonationEndDate) {
+                            setUserDonationEndDate(new Date());
+                          }
+                          setShowUserDonationEndDatePicker(false);
+                        }}>
+                        <Text style={styles.datePickerDone}>Done</Text>
+                      </TouchableOpacity>
+                    </View>
+                    <DateTimePicker
+                      value={userDonationEndDate || new Date()}
+                      mode="date"
+                      display="spinner"
+                      onChange={handleUserDonationEndDateChange}
+                      minimumDate={userDonationStartDate || undefined}
+                    />
+                  </View>
+                </View>
+              </Modal>
+            )}
+
+            {Platform.OS === 'android' && showUserDonationEndDatePicker && (
+              <DateTimePicker
+                value={userDonationEndDate || new Date()}
+                mode="date"
+                display="default"
+                onChange={handleUserDonationEndDateChange}
+                minimumDate={userDonationStartDate || undefined}
+              />
+            )}
+          </View>
+        </View>
+      </Modal>
+
+      {/* Donor Avatar Large Image Modal */}
+      <Modal
+        visible={donorAvatarModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDonorAvatarModalVisible(false)}>
+        <TouchableOpacity
+          style={styles.avatarModalOverlay}
+          activeOpacity={1}
+          onPress={() => setDonorAvatarModalVisible(false)}>
+          <View style={styles.avatarModalContainer}>
+            {selectedDonor && selectedDonor.avatar && (
+              <Image
+                source={{ uri: selectedDonor.avatar }}
+                style={styles.avatarModalImage}
+                resizeMode="contain"
+              />
+            )}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       {/* Map donation managers modal */}
       <Modal
         visible={mappingModalVisible}
@@ -2317,6 +3238,9 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
+    paddingVertical: 4,
+    paddingHorizontal: 4,
+    borderRadius: 8,
   },
   itemRight: {
     flexDirection: 'row',
@@ -2799,6 +3723,277 @@ const styles = StyleSheet.create({
     fontFamily: fonts.heading,
     fontSize: 9,
     color: colors.text,
+  },
+  userDonationModalContainer: {
+    maxHeight: '90%',
+  },
+  searchButton: {
+    marginTop: 8,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+  },
+  searchButtonDisabled: {
+    opacity: 0.5,
+  },
+  searchButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+  },
+  userDonationList: {
+    maxHeight: 400,
+    marginTop: 12,
+  },
+  userDonationItem: {
+    flexDirection: 'row',
+    padding: 12,
+    marginBottom: 12,
+    borderRadius: 12,
+    backgroundColor: colors.cardMuted,
+    gap: 12,
+  },
+  userDonationAvatar: {
+    width: 48,
+    height: 48,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userDonationAvatarImage: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+  },
+  userDonationAvatarPlaceholder: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  userDonationAvatarText: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: '#fff',
+  },
+  userDonationContent: {
+    flex: 1,
+    gap: 4,
+  },
+  userDonationName: {
+    fontFamily: fonts.heading,
+    fontSize: 15,
+    color: colors.text,
+  },
+  userDonationSubcategory: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.text,
+  },
+  userDonationCategory: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
+  userDonationDate: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 4,
+  },
+  userDonationAmount: {
+    alignItems: 'flex-end',
+    justifyContent: 'center',
+    gap: 4,
+  },
+  userDonationAmountText: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: '#12b886',
+  },
+  userDonationMethod: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: colors.textMuted,
+  },
+  summaryCard: {
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.cardMuted,
+    marginTop: 12,
+    marginBottom: 12,
+  },
+  summaryCardTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.text,
+    marginBottom: 8,
+  },
+  summaryRow: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  summaryItem: {
+    flex: 1,
+    alignItems: 'center',
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+  },
+  summaryItemFull: {
+    flex: 1,
+    minWidth: '100%',
+  },
+  summaryLabel: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: colors.textMuted,
+    marginBottom: 4,
+  },
+  summaryValue: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+  },
+  summaryAmount: {
+    fontFamily: fonts.heading,
+    fontSize: 12,
+    color: colors.text,
+    marginTop: 4,
+  },
+  summaryAmountSuccess: {
+    color: '#12b886',
+  },
+  summaryAmountPending: {
+    color: '#b8860b',
+  },
+  summaryAmountFailed: {
+    color: '#f04438',
+  },
+  donorProfileHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.cardMuted,
+    marginBottom: 12,
+    gap: 12,
+  },
+  donorProfileAvatarContainer: {
+    width: 60,
+    height: 60,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  donorProfileAvatar: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+  },
+  donorProfileAvatarPlaceholder: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  donorProfileAvatarText: {
+    fontFamily: fonts.heading,
+    fontSize: 24,
+    color: '#fff',
+  },
+  donorProfileInfo: {
+    flex: 1,
+    gap: 6,
+  },
+  donorProfileName: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    marginBottom: 2,
+  },
+  donorProfileInfoRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 6,
+  },
+  donorProfileInfoText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.text,
+  },
+  donorProfileModalContainer: {
+    maxHeight: '80%',
+    width: '90%',
+    alignSelf: 'center',
+  },
+  donorProfileContent: {
+    maxHeight: 500,
+  },
+  donorProfileLargeAvatarContainer: {
+    alignItems: 'center',
+    marginBottom: 24,
+    marginTop: 12,
+  },
+  donorProfileLargeAvatar: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+  },
+  donorProfileLargeAvatarPlaceholder: {
+    width: 120,
+    height: 120,
+    borderRadius: 60,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  donorProfileLargeAvatarText: {
+    fontFamily: fonts.heading,
+    fontSize: 48,
+    color: '#fff',
+  },
+  donorProfileDetails: {
+    gap: 16,
+    paddingHorizontal: 8,
+  },
+  donorProfileDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    gap: 12,
+  },
+  donorProfileDetailLabel: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.textMuted,
+    minWidth: 80,
+  },
+  donorProfileDetailValue: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  avatarModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.9)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarModalContainer: {
+    width: '90%',
+    height: '70%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  avatarModalImage: {
+    width: '100%',
+    height: '100%',
   },
 });
 
