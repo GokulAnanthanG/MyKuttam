@@ -3,6 +3,7 @@ import {
   ActivityIndicator,
   Alert,
   Image,
+  KeyboardAvoidingView,
   Modal,
   NativeScrollEvent,
   NativeSyntheticEvent,
@@ -38,6 +39,7 @@ import {
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { useAuth } from '../context/AuthContext';
+import { RazorpayService, createRazorpayOptions } from '../services/razorpay';
 
 type Props = NativeStackScreenProps<DonationStackParamList, 'SubcategoryDetail'>;
 
@@ -90,6 +92,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     subcategoryId,
     subcategoryTitle,
     subcategoryDescription,
+    subcategoryType,
+    subcategoryAmount,
     managers,
     subcategoryIncome = 0,
     subcategoryExpense = 0,
@@ -208,6 +212,9 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     fatherName?: string;
     address?: string;
   } | null>(null);
+  const [paymentAmountModalVisible, setPaymentAmountModalVisible] = useState(false);
+  const [paymentAmount, setPaymentAmount] = useState('');
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
 
   const canManageSubcategory = useMemo(() => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
@@ -568,11 +575,115 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   };
 
   const handleDonateNow = () => {
-    Toast.show({
-      type: 'info',
-      text1: 'Donate now',
-      text2: 'Razorpay flow coming soon!',
-    });
+    if (subcategoryType === 'specific_amount') {
+      // Direct payment for specific amount
+      if (!subcategoryAmount || subcategoryAmount <= 0) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid amount',
+          text2: 'This subcategory does not have a valid amount configured.',
+        });
+        return;
+      }
+      initiatePayment(subcategoryAmount);
+    } else if (subcategoryType === 'open_donation') {
+      // Show amount input modal for open donation
+      setPaymentAmount('');
+      setPaymentAmountModalVisible(true);
+    } else {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid donation type',
+        text2: 'Unable to process donation for this subcategory.',
+      });
+    }
+  };
+
+  const handleConfirmPaymentAmount = () => {
+    const amount = parseFloat(paymentAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Invalid amount',
+        text2: 'Please enter a valid amount greater than zero.',
+      });
+      return;
+    }
+    setPaymentAmountModalVisible(false);
+    initiatePayment(amount);
+  };
+
+  const initiatePayment = async (amount: number) => {
+    if (!currentUser) {
+      Toast.show({
+        type: 'error',
+        text1: 'Authentication required',
+        text2: 'Please login to make a donation.',
+      });
+      return;
+    }
+
+    setPaymentProcessing(true);
+    try {
+      const description = `Donation for ${subcategoryTitle}${subcategoryDescription ? ` - ${subcategoryDescription}` : ''}`;
+      const options = createRazorpayOptions(
+        amount,
+        description,
+        currentUser.name,
+        currentUser.phone,
+      );
+
+      const paymentResponse = await RazorpayService.openCheckout(options);
+
+      // Payment successful, create donation record
+      await handlePaymentSuccess(paymentResponse, amount);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Payment failed';
+      if (errorMessage !== 'Payment cancelled by user') {
+        Toast.show({
+          type: 'error',
+          text1: 'Payment failed',
+          text2: errorMessage,
+        });
+      }
+    } finally {
+      setPaymentProcessing(false);
+    }
+  };
+
+  const handlePaymentSuccess = async (paymentResponse: { razorpay_payment_id: string }, amount: number) => {
+    try {
+      const payload = {
+        subcategory_id: subcategoryId,
+        amount: amount,
+        payment_method: 'online' as const,
+        transaction_id: paymentResponse.razorpay_payment_id,
+        payment_status: 'success' as const,
+        donor_id: currentUser?.id,
+        Donor_name: currentUser?.name,
+        donor_phone: currentUser?.phone,
+        donor_address: currentUser?.address,
+      };
+
+      const response = await DonationService.createDonation(payload);
+      if (response.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Donation successful',
+          text2: `Thank you for your donation of ${formatCurrency(amount)}!`,
+        });
+        // Refresh donations list
+        await fetchDonations(1);
+      } else {
+        throw new Error(response.message || 'Failed to record donation');
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Payment recorded but donation failed',
+        text2: error instanceof Error ? error.message : 'Please contact support.',
+      });
+    }
   };
 
   const handleViewDonorDonations = (donation: DonationRecord) => {
@@ -2938,6 +3049,60 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         </TouchableOpacity>
       </Modal>
 
+      {/* Payment Amount Modal */}
+      <Modal
+        visible={paymentAmountModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPaymentAmountModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Enter Donation Amount</Text>
+              <TouchableOpacity
+                onPress={() => setPaymentAmountModalVisible(false)}
+                style={styles.modalCloseButton}>
+                <Icon name="times" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalLabel}>Amount (₹)</Text>
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Enter amount"
+                placeholderTextColor={colors.textMuted}
+                value={paymentAmount}
+                onChangeText={setPaymentAmount}
+                keyboardType="decimal-pad"
+                autoFocus
+              />
+              <View style={styles.modalButtonRow}>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonCancel]}
+                  onPress={() => {
+                    setPaymentAmountModalVisible(false);
+                    setPaymentAmount('');
+                  }}>
+                  <Text style={styles.modalButtonCancelText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.modalButton, styles.modalButtonConfirm]}
+                  onPress={handleConfirmPaymentAmount}
+                  disabled={paymentProcessing}>
+                  {paymentProcessing ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.modalButtonConfirmText}>Confirm</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
       {/* Map donation managers modal */}
       <Modal
         visible={mappingModalVisible}
@@ -3994,6 +4159,65 @@ const styles = StyleSheet.create({
   avatarModalImage: {
     width: '100%',
     height: '100%',
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 20,
+  },
+  modalCloseButton: {
+    padding: 4,
+  },
+  modalContent: {
+    gap: 16,
+  },
+  modalLabel: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.text,
+    marginBottom: 8,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    fontFamily: fonts.body,
+    color: colors.text,
+    backgroundColor: colors.card,
+  },
+  modalButtonRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  modalButtonCancel: {
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  modalButtonCancelText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.text,
+  },
+  modalButtonConfirm: {
+    backgroundColor: colors.primary,
+  },
+  modalButtonConfirmText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
   },
 });
 

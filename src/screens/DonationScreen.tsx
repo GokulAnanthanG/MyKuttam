@@ -140,6 +140,8 @@ export const DonationScreen = () => {
       subcategoryId: subcategory.id,
       subcategoryTitle: subcategory.title,
       subcategoryDescription: subcategory.description,
+      subcategoryType: subcategory.type,
+      subcategoryAmount: subcategory.amount,
       managers: category.managers,
       subcategoryIncome: subcategory.totalIncome || 0,
       subcategoryExpense: subcategory.totalExpense || 0,

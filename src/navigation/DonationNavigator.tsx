@@ -10,6 +10,8 @@ export type DonationStackParamList = {
     subcategoryId: string;
     subcategoryTitle: string;
     subcategoryDescription?: string;
+    subcategoryType?: string;
+    subcategoryAmount?: number;
     managers?: {
       id: string;
       name: string;
