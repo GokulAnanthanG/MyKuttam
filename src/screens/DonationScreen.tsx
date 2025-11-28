@@ -26,6 +26,11 @@ import {
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { useAuth } from '../context/AuthContext';
+import {
+  pinCategory,
+  unpinCategory,
+  getPinnedCategoryIds,
+} from '../storage/donationRealm';
 
 const formatCurrency = (value?: number) => {
   if (value === undefined || value === null || Number.isNaN(value)) {
@@ -54,6 +59,7 @@ export const DonationScreen = () => {
   const [subcategoryType, setSubcategoryType] = useState<'open_donation' | 'specific_amount'>('open_donation');
   const [subcategoryAmount, setSubcategoryAmount] = useState('');
   const [subcategorySubmitting, setSubcategorySubmitting] = useState(false);
+  const [pinnedCategoryIds, setPinnedCategoryIds] = useState<Set<string>>(new Set());
 
   const isAdminUser = useMemo(() => {
     if (!currentUser?.role) {
@@ -89,12 +95,65 @@ export const DonationScreen = () => {
 
   useEffect(() => {
     loadSummary();
+    loadPinnedCategories();
   }, [loadSummary]);
+
+  const loadPinnedCategories = useCallback(async () => {
+    try {
+      const pinnedIds = await getPinnedCategoryIds();
+      setPinnedCategoryIds(pinnedIds);
+    } catch (error) {
+      console.error('Error loading pinned categories:', error);
+    }
+  }, []);
+
+  const handleTogglePin = useCallback(
+    async (categoryId: string) => {
+      try {
+        const isPinned = pinnedCategoryIds.has(categoryId);
+        if (isPinned) {
+          await unpinCategory(categoryId);
+        } else {
+          await pinCategory(categoryId);
+        }
+        // Update local state
+        const newPinnedIds = new Set(pinnedCategoryIds);
+        if (isPinned) {
+          newPinnedIds.delete(categoryId);
+        } else {
+          newPinnedIds.add(categoryId);
+        }
+        setPinnedCategoryIds(newPinnedIds);
+      } catch (error) {
+        console.error('Error toggling pin:', error);
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Failed to update pin status',
+        });
+      }
+    },
+    [pinnedCategoryIds],
+  );
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
     loadSummary({ isRefresh: true });
   }, [loadSummary]);
+
+  const sortedCategories = useMemo(() => {
+    // Sort categories: pinned first, then by name
+    return [...categories].sort((a, b) => {
+      const aPinned = pinnedCategoryIds.has(a.id);
+      const bPinned = pinnedCategoryIds.has(b.id);
+      
+      if (aPinned && !bPinned) return -1;
+      if (!aPinned && bPinned) return 1;
+      
+      // If both pinned or both unpinned, sort by name
+      return a.name.localeCompare(b.name);
+    });
+  }, [categories, pinnedCategoryIds]);
 
   const totals = useMemo(() => {
     return categories.reduce(
@@ -253,21 +312,38 @@ export const DonationScreen = () => {
 
   const renderCategory = ({ item }: { item: DonationCategorySummary }) => {
     const hasSurplus = (item.netAmount || 0) >= 0;
+    const isPinned = pinnedCategoryIds.has(item.id);
     return (
-      <View style={styles.categoryCard}>
+      <View style={[styles.categoryCard, isPinned && styles.categoryCardPinned]}>
         <View style={styles.categoryHeader}>
           <View style={styles.categoryIcon}>
             <Icon name="pie-chart" size={18} color="#fff" />
           </View>
           <View style={styles.categoryTitleWrapper}>
-            <Text style={styles.categoryName}>{item.name}</Text>
+            <View style={styles.categoryNameRow}>
+              <Text style={styles.categoryName}>{item.name}</Text>
+              {isPinned && <Icon name="thumb-tack" size={14} color={colors.primary} style={styles.pinIcon} />}
+            </View>
             <Text style={styles.categoryMeta}>
               {item.subcategories?.length || 0} sub categor{item.subcategories?.length === 1 ? 'y' : 'ies'}
             </Text>
           </View>
-          <View style={[styles.netBadge, hasSurplus ? styles.netBadgePositive : styles.netBadgeNegative]}>
-            <Icon name={hasSurplus ? 'arrow-up' : 'arrow-down'} size={12} color="#fff" />
-            <Text style={styles.netBadgeText}>{hasSurplus ? 'Surplus' : 'Deficit'}</Text>
+          <View style={styles.categoryHeaderRight}>
+            <TouchableOpacity
+              onPress={() => handleTogglePin(item.id)}
+              style={styles.pinButton}
+              activeOpacity={0.7}>
+              <Icon
+                name={isPinned ? 'thumb-tack' : 'thumb-tack'}
+                size={16}
+                color={isPinned ? colors.primary : colors.textMuted}
+                style={[isPinned && styles.pinButtonActive]}
+              />
+            </TouchableOpacity>
+            <View style={[styles.netBadge, hasSurplus ? styles.netBadgePositive : styles.netBadgeNegative]}>
+              <Icon name={hasSurplus ? 'arrow-up' : 'arrow-down'} size={12} color="#fff" />
+              <Text style={styles.netBadgeText}>{hasSurplus ? 'Surplus' : 'Deficit'}</Text>
+            </View>
           </View>
         </View>
 
@@ -380,7 +456,7 @@ export const DonationScreen = () => {
   return (
     <SafeAreaView style={styles.container}>
       <FlatList
-        data={categories}
+        data={sortedCategories}
         keyExtractor={(item) => item.id}
         contentContainerStyle={[
           styles.listContent,
@@ -664,10 +740,33 @@ const styles = StyleSheet.create({
   categoryTitleWrapper: {
     flex: 1,
   },
+  categoryNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
   categoryName: {
     fontFamily: fonts.heading,
     fontSize: 18,
     color: colors.text,
+  },
+  pinIcon: {
+    marginLeft: 4,
+  },
+  categoryHeaderRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  pinButton: {
+    padding: 4,
+  },
+  pinButtonActive: {
+    transform: [{ rotate: '45deg' }],
+  },
+  categoryCardPinned: {
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
   },
   categoryMeta: {
     fontFamily: fonts.body,
