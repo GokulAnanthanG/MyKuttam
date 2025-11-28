@@ -6,6 +6,7 @@ import { LoginScreen } from '../screens/LoginScreen';
 import { OtpScreen } from '../screens/OtpScreen';
 import { RegistrationScreen } from '../screens/RegistrationScreen';
 import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
+import { AboutScreen } from '../screens/AboutScreen';
 import { BottomTabNavigator } from './BottomTabNavigator';
 import { colors } from '../theme/colors';
 
@@ -15,6 +16,7 @@ export type RootStackParamList = {
   Register: { phone: string; otp: string };
   ForgotPassword: undefined;
   MainTabs: undefined;
+  About: undefined;
 };
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
@@ -48,6 +50,7 @@ export const AppNavigator = () => {
       <Stack.Screen name="Otp" component={OtpScreen} />
       <Stack.Screen name="Register" component={RegistrationScreen} />
       <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+      <Stack.Screen name="About" component={AboutScreen} />
       <Stack.Screen name="MainTabs" component={BottomTabNavigator} />
     </Stack.Navigator>
   );

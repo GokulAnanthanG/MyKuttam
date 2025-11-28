@@ -251,6 +251,19 @@ export const ProfileScreen = () => {
           </View>
         </View>
 
+        {/* About Link - Before Profile Content */}
+        <Pressable
+          onPress={() => {
+            (navigation as any).navigate('About');
+          }}
+          style={styles.aboutLink}>
+          <View style={styles.aboutLinkContent}>
+            <Icon name="info-circle" size={18} color={colors.primary} />
+            <Text style={styles.aboutLinkText}>About My Kuttam</Text>
+            <Icon name="chevron-right" size={16} color={colors.textMuted} />
+          </View>
+        </Pressable>
+
         {/* Avatar Section */}
         <View style={styles.avatarSection}>
           <View style={styles.avatarContainer}>
@@ -556,6 +569,33 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background,
   },
+  aboutLink: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 20,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.primary + '20',
+  },
+  aboutLinkContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  aboutLinkText: {
+    flex: 1,
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
+  },
   scrollView: {
     flex: 1,
   },
@@ -571,6 +611,33 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 16,
     color: colors.textMuted,
+  },
+  aboutLink: {
+    marginHorizontal: 20,
+    marginTop: 10,
+    marginBottom: 20,
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 16,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.05,
+    shadowRadius: 4,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: colors.primary + '20',
+  },
+  aboutLinkContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  aboutLinkText: {
+    flex: 1,
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
