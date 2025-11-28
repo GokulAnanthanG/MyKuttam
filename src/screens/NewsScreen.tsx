@@ -6,9 +6,11 @@ import {
   Image,
   Linking,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Switch,
   Text,
@@ -37,6 +39,7 @@ import {
   type News,
   type Comment,
 } from '../services/news';
+import { BASE_URL } from '../config/api';
 
 const formatTimeAgo = (dateString: string): string => {
   const date = new Date(dateString);
@@ -200,6 +203,90 @@ export const NewsScreen = () => {
     };
   }, [resetAudioProgress, stopAudioProgressInterval]);
 
+  // Deep link handling - open news when deep link is clicked
+  useEffect(() => {
+    // Handle deep link when app is already open
+    const handleDeepLink = (event: { url: string }) => {
+      const url = event.url;
+      // Parse deep link: mykuttam://news/:id
+      const deepLinkMatch = url.match(/mykuttam:\/\/news\/(.+)/);
+      if (deepLinkMatch && deepLinkMatch[1]) {
+        const newsId = deepLinkMatch[1];
+        // Find the news item and open it
+        const news = [...highlightedNews, ...featuredNews].find((n) => n.id === newsId);
+        if (news) {
+          setSelectedHighlightNews(news);
+          setShowHighlightModal(true);
+        } else {
+          // If news not loaded yet, fetch it
+          fetchNewsById(newsId);
+        }
+        return;
+      }
+
+      // Parse web URL: https://domain.com/news/:id
+      const webUrlMatch = url.match(/https?:\/\/[^\/]+\/news\/(.+)/);
+      if (webUrlMatch && webUrlMatch[1]) {
+        const newsId = webUrlMatch[1];
+        // Find the news item and open it
+        const news = [...highlightedNews, ...featuredNews].find((n) => n.id === newsId);
+        if (news) {
+          setSelectedHighlightNews(news);
+          setShowHighlightModal(true);
+        } else {
+          // If news not loaded yet, fetch it
+          fetchNewsById(newsId);
+        }
+      }
+    };
+
+    // Handle deep link when app opens from closed state
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
+
+    // Listen for deep links when app is open
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [highlightedNews, featuredNews]);
+
+  const fetchNewsById = async (newsId: string) => {
+    try {
+      const response = await NewsService.getNewsById(newsId);
+      if (response.success && response.data) {
+        // Check if data is a News object (has id property)
+        const newsData = response.data as any;
+        if (newsData.id) {
+          setSelectedHighlightNews(newsData as News);
+          setShowHighlightModal(true);
+        } else {
+          Toast.show({
+            type: 'error',
+            text1: 'News not found',
+            text2: 'The news item you are trying to view does not exist.',
+          });
+        }
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'News not found',
+          text2: 'The news item you are trying to view does not exist.',
+        });
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load news item.',
+      });
+    }
+  };
+
   // Check if user can edit/delete
   const canEditDelete = (news: News) => {
     if (!currentUser) return false;
@@ -255,15 +342,34 @@ export const NewsScreen = () => {
         sortBy: 'created_date',
         sortOrder: 'desc',
       });
-      if (response.success && response.data.news) {
-        setHighlightedNews(response.data.news);
-        // Check like status for highlighted news
-        if (currentUser) {
-          checkLikeStatuses(response.data.news);
+      if (response.success) {
+        // Check if data exists and has news array
+        if (response.data && response.data.news && Array.isArray(response.data.news)) {
+          setHighlightedNews(response.data.news);
+          // Check like status for highlighted news
+          if (currentUser) {
+            checkLikeStatuses(response.data.news);
+          }
+        } else {
+          // Backend returned success but no news data
+          console.warn('No news data in highlighted response:', response);
+          setHighlightedNews([]);
         }
+      } else {
+        // Handle case where response is not successful
+        console.warn('Failed to fetch highlighted news:', response.message);
+        setHighlightedNews([]);
       }
     } catch (error) {
       console.error('Error fetching highlighted news:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to load highlighted news';
+      Toast.show({
+        type: 'error',
+        text1: 'Error fetching news',
+        text2: errorMessage,
+        visibilityTime: 3000,
+      });
+      setHighlightedNews([]);
     }
   }, [currentUser, checkLikeStatuses]);
 
@@ -283,32 +389,71 @@ export const NewsScreen = () => {
           sortOrder: 'desc',
         });
 
-        if (response.success && response.data.news) {
-          if (append) {
-            setFeaturedNews((prev) => [...prev, ...response.data.news!]);
-            // Check like status for new items
-            if (currentUser) {
-              checkLikeStatuses(response.data.news);
+        if (response.success) {
+          // Check if data exists and has news array
+          if (response.data && response.data.news && Array.isArray(response.data.news)) {
+            if (append) {
+              setFeaturedNews((prev) => [...prev, ...response.data.news!]);
+              // Check like status for new items
+              if (currentUser) {
+                checkLikeStatuses(response.data.news);
+              }
+            } else {
+              setFeaturedNews(response.data.news);
+              // Check like status for all items
+              if (currentUser) {
+                checkLikeStatuses(response.data.news);
+              }
             }
+
+            const totalPages = response.data.pagination?.totalPages || 0;
+            setHasMore(pageNum < totalPages);
+            setPage(pageNum);
           } else {
-            setFeaturedNews(response.data.news);
-            // Check like status for all items
-            if (currentUser) {
-              checkLikeStatuses(response.data.news);
+            // Backend returned success but no news data (empty or different format)
+            if (!append) {
+              setFeaturedNews([]);
+            }
+            setHasMore(false);
+            // Don't show error if it's just empty data
+            if (pageNum === 1 && response.data && !response.data.news) {
+              console.log('No news data in response:', response);
             }
           }
-
-          const totalPages = response.data.pagination?.totalPages || 0;
-          setHasMore(pageNum < totalPages);
-          setPage(pageNum);
+        } else {
+          // Handle case where response is not successful
+          const errorMsg = response.message || 'Failed to load news';
+          Toast.show({
+            type: 'error',
+            text1: 'Error fetching news',
+            text2: errorMsg,
+            visibilityTime: 3000,
+          });
+          if (!append) {
+            setFeaturedNews([]);
+          }
+          setHasMore(false);
         }
       } catch (error) {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: error instanceof Error ? error.message : 'Failed to load news',
-          visibilityTime: 3000,
-        });
+        console.error('Error fetching featured news:', error);
+        const errorMessage = error instanceof Error ? error.message : 'Failed to load news';
+        
+        // Only show error toast on first page load, not on pagination
+        if (pageNum === 1) {
+          Toast.show({
+            type: 'error',
+            text1: 'Error fetching news',
+            text2: errorMessage.includes('Network') || errorMessage.includes('fetch') 
+              ? 'Network error. Please check your connection.' 
+              : errorMessage,
+            visibilityTime: 3000,
+          });
+        }
+        
+        if (!append) {
+          setFeaturedNews([]);
+        }
+        setHasMore(false); // Stop pagination on error
       } finally {
         if (pageNum === 1) {
           setLoading(false);
@@ -321,9 +466,22 @@ export const NewsScreen = () => {
   );
 
   useEffect(() => {
-    fetchHighlightedNews();
-    fetchFeaturedNews(1, false);
-  }, [fetchHighlightedNews, fetchFeaturedNews]);
+    // Only fetch on mount, not when functions change
+    let isMounted = true;
+    
+    const loadNews = async () => {
+      if (isMounted) {
+        await fetchHighlightedNews();
+        await fetchFeaturedNews(1, false);
+      }
+    };
+    
+    loadNews();
+    
+    return () => {
+      isMounted = false;
+    };
+  }, []); // Empty dependency array - only run once on mount
 
   const handleRefresh = () => {
     setRefreshing(true);
@@ -799,6 +957,74 @@ export const NewsScreen = () => {
     setSelectedHighlightNews(null);
   }, [currentAudioId, selectedHighlightNews, stopAudioPlayback]);
 
+  const generateNewsDeepLink = (newsId: string): string => {
+    // Generate deep link for news item
+    // Format: mykuttam://news/:id
+    return `mykuttam://news/${newsId}`;
+  };
+
+  const generateNewsWebUrl = (newsId: string): string => {
+    // Generate web URL for sharing (more compatible with messaging apps)
+    // Backend serves HTML pages at GET /news/:id (not /api/news/:id)
+    // This endpoint includes Open Graph tags for rich link previews
+    // Always use BASE_URL from environment variable
+    if (!BASE_URL) {
+      console.error('BASE_URL is not configured. Please set API_BASE_URL in .env file');
+      return '';
+    }
+    
+    // Remove /api from BASE_URL if present (web endpoint is at root level)
+    let baseUrl = BASE_URL;
+    
+    if (baseUrl.endsWith('/api')) {
+      baseUrl = baseUrl.slice(0, -4);
+    } else if (baseUrl.includes('/api/')) {
+      baseUrl = baseUrl.replace('/api', '');
+    }
+    
+    // Ensure no trailing slash
+    baseUrl = baseUrl.replace(/\/$/, '');
+    
+    return `${baseUrl}/news/${newsId}`;
+  };
+
+  const handleShareNews = async (news: News) => {
+    try {
+      const deepLink = generateNewsDeepLink(news.id);
+      const webUrl = generateNewsWebUrl(news.id);
+      
+      // Format like Instagram - URL first, then description
+      // This helps messaging apps recognize it as a link and show preview
+      const message = `${webUrl}\n\n${news.title}${news.description ? `\n\n${news.description}` : ''}`;
+      
+      // For iOS, use url property for better link preview support
+      // For Android, put URL at the start of message for better recognition
+      const shareContent = Platform.OS === 'ios' 
+        ? {
+            url: webUrl, // iOS: URL property helps with link preview
+            message: news.title + (news.description ? `\n\n${news.description}` : ''),
+            title: news.title,
+          }
+        : {
+            message: message, // Android: URL in message for better recognition
+            title: news.title,
+          };
+
+      const result = await Share.share(shareContent);
+      if (result.action === Share.sharedAction) {
+        // Share was successful
+      } else if (result.action === Share.dismissedAction) {
+        // Share was dismissed
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Share failed',
+        text2: error instanceof Error ? error.message : 'Unable to share news',
+      });
+    }
+  };
+
   const handleOpenHighlightComments = () => {
     if (!selectedHighlightNews) {
       return;
@@ -988,7 +1214,7 @@ export const NewsScreen = () => {
                 activeOpacity={0.9}
                 onPress={(e) => {
                   e.stopPropagation();
-                  setSelectedImageUri(item.media_src);
+                  setSelectedImageUri(item.media_src || null);
                   setImageModalVisible(true);
                 }}>
                 <Image source={{ uri: item.media_src }} style={styles.highlightBackgroundImage} resizeMode="cover" />
@@ -1157,7 +1383,7 @@ export const NewsScreen = () => {
             activeOpacity={0.9}
             onPress={(e) => {
               e.stopPropagation();
-              setSelectedImageUri(item.media_src);
+                  setSelectedImageUri(item.media_src || null);
               setImageModalVisible(true);
             }}>
             <Image source={{ uri: item.media_src }} style={styles.featuredImage} resizeMode="cover" />
@@ -1270,10 +1496,15 @@ export const NewsScreen = () => {
             <Icon name="comment" size={16} color={colors.textMuted} />
             <Text style={styles.actionText}>{item.noOfComments || 0}</Text>
           </TouchableOpacity>
-          <View style={styles.actionItem}>
+          <TouchableOpacity
+            style={styles.actionItem}
+            onPress={(e) => {
+              e.stopPropagation();
+              handleShareNews(item);
+            }}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
             <Icon name="share" size={16} color={colors.textMuted} />
-            <Text style={styles.actionText}>0</Text>
-          </View>
+          </TouchableOpacity>
         </View>
 
         {/* Menu Modal */}
@@ -1697,12 +1928,24 @@ export const NewsScreen = () => {
               )}
 
               {selectedHighlightNews && (
-                <TouchableOpacity
-                  style={styles.highlightModalCommentsButton}
-                  onPress={handleOpenHighlightComments}>
-                  <Icon name="comment" size={18} color={colors.primary} />
-                  <Text style={styles.highlightModalCommentsText}>View comments</Text>
-                </TouchableOpacity>
+                <>
+                  <TouchableOpacity
+                    style={styles.highlightModalCommentsButton}
+                    onPress={handleOpenHighlightComments}>
+                    <Icon name="comment" size={18} color={colors.primary} />
+                    <Text style={styles.highlightModalCommentsText}>View comments</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[styles.highlightModalCommentsButton, styles.highlightModalShareButton]}
+                    onPress={() => {
+                      if (selectedHighlightNews) {
+                        handleShareNews(selectedHighlightNews);
+                      }
+                    }}>
+                    <Icon name="share" size={18} color={colors.primary} />
+                    <Text style={styles.highlightModalCommentsText}>Share</Text>
+                  </TouchableOpacity>
+                </>
               )}
 
               <View style={styles.highlightModalFooter}>
@@ -2661,6 +2904,9 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: colors.primary,
     fontWeight: '600',
+  },
+  highlightModalShareButton: {
+    marginTop: 12,
   },
   highlightModalFooter: {
     paddingTop: 16,
