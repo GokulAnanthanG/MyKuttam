@@ -38,6 +38,7 @@ import {
   NewsService,
   type News,
   type Comment,
+  type MediaType,
 } from '../services/news';
 import { BASE_URL } from '../config/api';
 
@@ -177,7 +178,7 @@ export const NewsScreen = () => {
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [createTitle, setCreateTitle] = useState('');
   const [createDescription, setCreateDescription] = useState('');
-  const [createMediaType, setCreateMediaType] = useState<'IMAGE' | 'VIDEO' | 'AUDIO'>('IMAGE');
+  const [createMediaType, setCreateMediaType] = useState<MediaType>('TEXT');
   const [createIsHighlighted, setCreateIsHighlighted] = useState(false);
   const [createExternalUrl, setCreateExternalUrl] = useState('');
   const [selectedMedia, setSelectedMedia] = useState<{ uri: string; type: string; name: string; fileSize?: number } | null>(null);
@@ -907,7 +908,8 @@ export const NewsScreen = () => {
       return;
     }
 
-    if (!selectedMedia) {
+    // Only require media if not TEXT type
+    if (createMediaType !== 'TEXT' && !selectedMedia) {
       Toast.show({
         type: 'error',
         text1: 'Validation Error',
@@ -935,12 +937,14 @@ export const NewsScreen = () => {
         formData.append('external_url', createExternalUrl.trim());
       }
 
-      // Append media file
-      formData.append('media', {
-        uri: selectedMedia.uri,
-        type: selectedMedia.type,
-        name: selectedMedia.name,
-      } as any);
+      // Append media file only if not TEXT type
+      if (createMediaType !== 'TEXT' && selectedMedia) {
+        formData.append('media', {
+          uri: selectedMedia.uri,
+          type: selectedMedia.type,
+          name: selectedMedia.name,
+        } as any);
+      }
 
       const response = await NewsService.createNews({
         title: createTitle.trim(),
@@ -948,11 +952,11 @@ export const NewsScreen = () => {
         description: createDescription.trim() || undefined,
         is_highlighted: createIsHighlighted,
         external_url: createExternalUrl.trim() || undefined,
-        media: {
+        media: createMediaType !== 'TEXT' && selectedMedia ? {
           uri: selectedMedia.uri,
           type: selectedMedia.type,
           name: selectedMedia.name,
-        },
+        } : undefined,
       });
 
       if (response.success) {
@@ -966,7 +970,7 @@ export const NewsScreen = () => {
         // Reset form
         setCreateTitle('');
         setCreateDescription('');
-        setCreateMediaType('IMAGE');
+        setCreateMediaType('TEXT');
         setCreateIsHighlighted(false);
         setCreateExternalUrl('');
         setSelectedMedia(null);
@@ -1299,6 +1303,11 @@ export const NewsScreen = () => {
               <View style={[styles.highlightBackgroundImage, styles.highlightAudioPlaceholder]}>
                 <Icon name="music" size={36} color="#fff" />
                 <Text style={styles.highlightAudioPlaceholderText}>Audio</Text>
+              </View>
+            ) : item.media_type === 'TEXT' ? (
+              <View style={[styles.highlightBackgroundImage, styles.highlightTextPlaceholder]}>
+                <Icon name="file-text" size={40} color="#fff" />
+                <Text style={styles.highlightTextPlaceholderText}>Text</Text>
               </View>
             ) : (
               <View style={[styles.highlightBackgroundImage, styles.highlightImagePlaceholder]}>
@@ -2158,7 +2167,7 @@ export const NewsScreen = () => {
                   setShowCreateModal(false);
                   setCreateTitle('');
                   setCreateDescription('');
-                  setCreateMediaType('IMAGE');
+                  setCreateMediaType('TEXT');
                   setCreateIsHighlighted(false);
                   setCreateExternalUrl('');
                   setSelectedMedia(null);
@@ -2197,7 +2206,7 @@ export const NewsScreen = () => {
               <View style={styles.createFormGroup}>
                 <Text style={styles.createLabel}>Media Type *</Text>
                 <View style={styles.mediaTypeContainer}>
-                  {(['IMAGE', 'VIDEO', 'AUDIO'] as const).map((type) => (
+                  {(['TEXT', 'IMAGE', 'VIDEO', 'AUDIO'] as const).map((type) => (
                     <TouchableOpacity
                       key={type}
                       style={[
@@ -2220,42 +2229,44 @@ export const NewsScreen = () => {
                 </View>
               </View>
 
-              <View style={styles.createFormGroup}>
-                <Text style={styles.createLabel}>Media File * (Max 10MB)</Text>
-                <TouchableOpacity
-                  style={styles.mediaSelectButton}
-                  onPress={handleSelectMedia}>
-                  <Icon name="upload" size={20} color={colors.primary} />
-                  <Text style={styles.mediaSelectButtonText}>
-                    {selectedMedia ? 'Change Media' : 'Select Media'}
-                  </Text>
-                </TouchableOpacity>
-                {selectedMedia && (
-                  <View style={styles.selectedMediaContainer}>
-                    <Icon
-                      name={createMediaType === 'IMAGE' ? 'image' : createMediaType === 'VIDEO' ? 'video-camera' : 'music'}
-                      size={16}
-                      color={colors.primary}
-                    />
-                    <Text style={styles.selectedMediaText} numberOfLines={1}>
-                      {selectedMedia.name}
+              {createMediaType !== 'TEXT' && (
+                <View style={styles.createFormGroup}>
+                  <Text style={styles.createLabel}>Media File * (Max 10MB)</Text>
+                  <TouchableOpacity
+                    style={styles.mediaSelectButton}
+                    onPress={handleSelectMedia}>
+                    <Icon name="upload" size={20} color={colors.primary} />
+                    <Text style={styles.mediaSelectButtonText}>
+                      {selectedMedia ? 'Change Media' : 'Select Media'}
                     </Text>
-                    {selectedMedia.fileSize && (
-                      <Text style={styles.selectedMediaSize}>
-                        ({(selectedMedia.fileSize / (1024 * 1024)).toFixed(2)} MB)
+                  </TouchableOpacity>
+                  {selectedMedia && (
+                    <View style={styles.selectedMediaContainer}>
+                      <Icon
+                        name={createMediaType === 'IMAGE' ? 'image' : createMediaType === 'VIDEO' ? 'video-camera' : 'music'}
+                        size={16}
+                        color={colors.primary}
+                      />
+                      <Text style={styles.selectedMediaText} numberOfLines={1}>
+                        {selectedMedia.name}
                       </Text>
-                    )}
-                    <TouchableOpacity
-                      onPress={() => setSelectedMedia(null)}
-                      style={styles.removeMediaButton}>
-                      <Icon name="times" size={14} color={colors.danger} />
-                    </TouchableOpacity>
-                  </View>
-                )}
-                {selectedMedia && createMediaType === 'IMAGE' && (
-                  <Image source={{ uri: selectedMedia.uri }} style={styles.selectedMediaPreview} />
-                )}
-              </View>
+                      {selectedMedia.fileSize && (
+                        <Text style={styles.selectedMediaSize}>
+                          ({(selectedMedia.fileSize / (1024 * 1024)).toFixed(2)} MB)
+                        </Text>
+                      )}
+                      <TouchableOpacity
+                        onPress={() => setSelectedMedia(null)}
+                        style={styles.removeMediaButton}>
+                        <Icon name="times" size={14} color={colors.danger} />
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                  {selectedMedia && createMediaType === 'IMAGE' && (
+                    <Image source={{ uri: selectedMedia.uri }} style={styles.selectedMediaPreview} />
+                  )}
+                </View>
+              )}
 
               <View style={styles.createFormGroup}>
                 <Text style={styles.createLabel}>External URL (Optional)</Text>
@@ -2294,7 +2305,7 @@ export const NewsScreen = () => {
                   setShowCreateModal(false);
                   setCreateTitle('');
                   setCreateDescription('');
-                  setCreateMediaType('IMAGE');
+                  setCreateMediaType('TEXT');
                   setCreateIsHighlighted(false);
                   setCreateExternalUrl('');
                   setSelectedMedia(null);
@@ -2304,7 +2315,7 @@ export const NewsScreen = () => {
               <TouchableOpacity
                 style={[styles.createButton, styles.createButtonSave]}
                 onPress={handleCreateNews}
-                disabled={creatingNews || !createTitle.trim() || !selectedMedia}>
+                disabled={creatingNews || !createTitle.trim() || (createMediaType !== 'TEXT' && !selectedMedia)}>
                 {creatingNews ? (
                   <ActivityIndicator size="small" color="#fff" />
                 ) : (
@@ -2422,6 +2433,18 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   highlightAudioPlaceholderText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+    letterSpacing: 0.5,
+  },
+  highlightTextPlaceholder: {
+    backgroundColor: '#2d3748',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 8,
+  },
+  highlightTextPlaceholderText: {
     fontFamily: fonts.heading,
     fontSize: 14,
     color: '#fff',

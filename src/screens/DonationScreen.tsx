@@ -62,6 +62,38 @@ export const DonationScreen = () => {
   const [subcategoryAmount, setSubcategoryAmount] = useState('');
   const [subcategorySubmitting, setSubcategorySubmitting] = useState(false);
   const [pinnedCategoryIds, setPinnedCategoryIds] = useState<Set<string>>(new Set());
+  
+  // Status change confirmation states
+  const [categoryStatusConfirmModal, setCategoryStatusConfirmModal] = useState<{
+    visible: boolean;
+    categoryId: string | null;
+    categoryName: string;
+    currentStatus: 'active' | 'inactive';
+    newStatus: 'active' | 'inactive';
+  }>({
+    visible: false,
+    categoryId: null,
+    categoryName: '',
+    currentStatus: 'active',
+    newStatus: 'active',
+  });
+  const [subcategoryStatusConfirmModal, setSubcategoryStatusConfirmModal] = useState<{
+    visible: boolean;
+    subcategoryId: string | null;
+    subcategoryTitle: string;
+    categoryId: string | null;
+    currentStatus: 'active' | 'inactive';
+    newStatus: 'active' | 'inactive';
+  }>({
+    visible: false,
+    subcategoryId: null,
+    subcategoryTitle: '',
+    categoryId: null,
+    currentStatus: 'active',
+    newStatus: 'active',
+  });
+  const [statusConfirmText, setStatusConfirmText] = useState('');
+  const [statusConfirmSubmitting, setStatusConfirmSubmitting] = useState(false);
 
   const isAdminUser = useMemo(() => {
     if (!currentUser?.role) {
@@ -139,79 +171,163 @@ export const DonationScreen = () => {
   );
 
   const handleToggleCategoryStatus = useCallback(
-    async (categoryId: string, currentStatus: 'active' | 'inactive' | undefined) => {
+    (categoryId: string, categoryName: string, currentStatus: 'active' | 'inactive' | undefined) => {
       if (!isAdminUser) {
         return;
       }
 
       const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
       
-      try {
-        const response = await DonationService.updateCategoryStatus(categoryId, newStatus);
-        if (response.success) {
-          // Update local state
-          setCategories((prev) =>
-            prev.map((cat) =>
-              cat.id === categoryId ? { ...cat, status: newStatus } : cat,
-            ),
-          );
-          Toast.show({
-            type: 'success',
-            text1: 'Status updated',
-            text2: `Category is now ${newStatus}`,
-          });
-        }
-      } catch (error) {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: error instanceof Error ? error.message : 'Failed to update category status',
-        });
-      }
+      // Show confirmation modal
+      setCategoryStatusConfirmModal({
+        visible: true,
+        categoryId,
+        categoryName,
+        currentStatus: currentStatus || 'active',
+        newStatus,
+      });
+      setStatusConfirmText('');
     },
     [isAdminUser],
   );
+
+  const handleConfirmCategoryStatusChange = useCallback(async () => {
+    if (statusConfirmText.toLowerCase() !== 'confirm') {
+      Toast.show({
+        type: 'error',
+        text1: 'Confirmation required',
+        text2: 'Please type "confirm" to change the status.',
+      });
+      return;
+    }
+
+    if (!categoryStatusConfirmModal.categoryId) {
+      return;
+    }
+
+    try {
+      setStatusConfirmSubmitting(true);
+      const response = await DonationService.updateCategoryStatus(
+        categoryStatusConfirmModal.categoryId,
+        categoryStatusConfirmModal.newStatus,
+      );
+      if (response.success) {
+        // Update local state
+        setCategories((prev) =>
+          prev.map((cat) =>
+            cat.id === categoryStatusConfirmModal.categoryId
+              ? { ...cat, status: categoryStatusConfirmModal.newStatus }
+              : cat,
+          ),
+        );
+        Toast.show({
+          type: 'success',
+          text1: 'Status updated',
+          text2: `Category is now ${categoryStatusConfirmModal.newStatus}`,
+        });
+        setCategoryStatusConfirmModal({
+          visible: false,
+          categoryId: null,
+          categoryName: '',
+          currentStatus: 'active',
+          newStatus: 'active',
+        });
+        setStatusConfirmText('');
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to update category status',
+      });
+    } finally {
+      setStatusConfirmSubmitting(false);
+    }
+  }, [statusConfirmText, categoryStatusConfirmModal]);
 
   const handleToggleSubcategoryStatus = useCallback(
-    async (subcategoryId: string, categoryId: string, currentStatus: 'active' | 'inactive' | undefined) => {
+    (subcategoryId: string, subcategoryTitle: string, categoryId: string, currentStatus: 'active' | 'inactive' | undefined) => {
       if (!isAdminUser) {
         return;
       }
 
       const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
       
-      try {
-        const response = await DonationService.updateSubcategoryStatus(subcategoryId, newStatus);
-        if (response.success) {
-          // Update local state
-          setCategories((prev) =>
-            prev.map((cat) =>
-              cat.id === categoryId
-                ? {
-                    ...cat,
-                    subcategories: cat.subcategories?.map((sub) =>
-                      sub.id === subcategoryId ? { ...sub, status: newStatus } : sub,
-                    ),
-                  }
-                : cat,
-            ),
-          );
-          Toast.show({
-            type: 'success',
-            text1: 'Status updated',
-            text2: `Subcategory is now ${newStatus}`,
-          });
-        }
-      } catch (error) {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: error instanceof Error ? error.message : 'Failed to update subcategory status',
-        });
-      }
+      // Show confirmation modal
+      setSubcategoryStatusConfirmModal({
+        visible: true,
+        subcategoryId,
+        subcategoryTitle,
+        categoryId,
+        currentStatus: currentStatus || 'active',
+        newStatus,
+      });
+      setStatusConfirmText('');
     },
     [isAdminUser],
   );
+
+  const handleConfirmSubcategoryStatusChange = useCallback(async () => {
+    if (statusConfirmText.toLowerCase() !== 'confirm') {
+      Toast.show({
+        type: 'error',
+        text1: 'Confirmation required',
+        text2: 'Please type "confirm" to change the status.',
+      });
+      return;
+    }
+
+    if (!subcategoryStatusConfirmModal.subcategoryId || !subcategoryStatusConfirmModal.categoryId) {
+      return;
+    }
+
+    try {
+      setStatusConfirmSubmitting(true);
+      const response = await DonationService.updateSubcategoryStatus(
+        subcategoryStatusConfirmModal.subcategoryId,
+        subcategoryStatusConfirmModal.newStatus,
+      );
+      if (response.success) {
+        // Update local state
+        setCategories((prev) =>
+          prev.map((cat) =>
+            cat.id === subcategoryStatusConfirmModal.categoryId
+              ? {
+                  ...cat,
+                  subcategories: cat.subcategories?.map((sub) =>
+                    sub.id === subcategoryStatusConfirmModal.subcategoryId
+                      ? { ...sub, status: subcategoryStatusConfirmModal.newStatus }
+                      : sub,
+                  ),
+                }
+              : cat,
+          ),
+        );
+        Toast.show({
+          type: 'success',
+          text1: 'Status updated',
+          text2: `Subcategory is now ${subcategoryStatusConfirmModal.newStatus}`,
+        });
+        setSubcategoryStatusConfirmModal({
+          visible: false,
+          subcategoryId: null,
+          subcategoryTitle: '',
+          categoryId: null,
+          currentStatus: 'active',
+          newStatus: 'active',
+        });
+        setStatusConfirmText('');
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to update subcategory status',
+      });
+    } finally {
+      setStatusConfirmSubmitting(false);
+    }
+  }, [statusConfirmText, subcategoryStatusConfirmModal]);
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -414,7 +530,7 @@ export const DonationScreen = () => {
                 <Text style={styles.statusLabel}>{categoryStatus === 'active' ? 'Active' : 'Inactive'}</Text>
                 <Switch
                   value={categoryStatus === 'active'}
-                  onValueChange={() => handleToggleCategoryStatus(item.id, categoryStatus)}
+                  onValueChange={() => handleToggleCategoryStatus(item.id, item.name, categoryStatus)}
                   trackColor={{ false: colors.border, true: colors.primary + '80' }}
                   thumbColor={categoryStatus === 'active' ? colors.primary : colors.textMuted}
                 />
@@ -475,7 +591,7 @@ export const DonationScreen = () => {
                         <View style={styles.subcategoryStatusToggle}>
                           <Switch
                             value={subcategoryStatus === 'active'}
-                            onValueChange={() => handleToggleSubcategoryStatus(sub.id, item.id, subcategoryStatus)}
+                            onValueChange={() => handleToggleSubcategoryStatus(sub.id, sub.title, item.id, subcategoryStatus)}
                             trackColor={{ false: colors.border, true: colors.primary + '80' }}
                             thumbColor={subcategoryStatus === 'active' ? colors.primary : colors.textMuted}
                             disabled={!isCategoryActive}
@@ -722,6 +838,154 @@ export const DonationScreen = () => {
                   <Text style={styles.modalButtonPrimaryText}>
                     {subcategorySubmitting ? 'Saving...' : 'Save'}
                   </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* Category Status Change Confirmation Modal */}
+      <Modal
+        visible={categoryStatusConfirmModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setCategoryStatusConfirmModal({
+            visible: false,
+            categoryId: null,
+            categoryName: '',
+            currentStatus: 'active',
+            newStatus: 'active',
+          });
+          setStatusConfirmText('');
+        }}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalKeyboardWrapper}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Change Category Status</Text>
+              <Text style={styles.modalSubtitle}>
+                Are you sure you want to change "{categoryStatusConfirmModal.categoryName}" status from{' '}
+                <Text style={{ fontWeight: '600' }}>{categoryStatusConfirmModal.currentStatus}</Text> to{' '}
+                <Text style={{ fontWeight: '600' }}>{categoryStatusConfirmModal.newStatus}</Text>?
+              </Text>
+              <Text style={styles.modalLabel}>Type "confirm" to proceed *</Text>
+              <TextInput
+                value={statusConfirmText}
+                onChangeText={setStatusConfirmText}
+                style={styles.modalInput}
+                placeholder="confirm"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={() => {
+                    setCategoryStatusConfirmModal({
+                      visible: false,
+                      categoryId: null,
+                      categoryName: '',
+                      currentStatus: 'active',
+                      newStatus: 'active',
+                    });
+                    setStatusConfirmText('');
+                  }}
+                  disabled={statusConfirmSubmitting}>
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modalButton,
+                    styles.modalButtonPrimary,
+                    (statusConfirmSubmitting || statusConfirmText.toLowerCase() !== 'confirm') &&
+                      styles.modalButtonDisabled,
+                  ]}
+                  onPress={handleConfirmCategoryStatusChange}
+                  disabled={statusConfirmSubmitting || statusConfirmText.toLowerCase() !== 'confirm'}>
+                  {statusConfirmSubmitting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.modalButtonPrimaryText}>Confirm</Text>
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* Subcategory Status Change Confirmation Modal */}
+      <Modal
+        visible={subcategoryStatusConfirmModal.visible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setSubcategoryStatusConfirmModal({
+            visible: false,
+            subcategoryId: null,
+            subcategoryTitle: '',
+            categoryId: null,
+            currentStatus: 'active',
+            newStatus: 'active',
+          });
+          setStatusConfirmText('');
+        }}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalKeyboardWrapper}>
+            <View style={styles.modalContent}>
+              <Text style={styles.modalTitle}>Change Subcategory Status</Text>
+              <Text style={styles.modalSubtitle}>
+                Are you sure you want to change "{subcategoryStatusConfirmModal.subcategoryTitle}" status from{' '}
+                <Text style={{ fontWeight: '600' }}>{subcategoryStatusConfirmModal.currentStatus}</Text> to{' '}
+                <Text style={{ fontWeight: '600' }}>{subcategoryStatusConfirmModal.newStatus}</Text>?
+              </Text>
+              <Text style={styles.modalLabel}>Type "confirm" to proceed *</Text>
+              <TextInput
+                value={statusConfirmText}
+                onChangeText={setStatusConfirmText}
+                style={styles.modalInput}
+                placeholder="confirm"
+                placeholderTextColor={colors.textMuted}
+                autoCapitalize="none"
+                autoCorrect={false}
+              />
+              <View style={styles.modalActions}>
+                <TouchableOpacity
+                  style={styles.modalButton}
+                  onPress={() => {
+                    setSubcategoryStatusConfirmModal({
+                      visible: false,
+                      subcategoryId: null,
+                      subcategoryTitle: '',
+                      categoryId: null,
+                      currentStatus: 'active',
+                      newStatus: 'active',
+                    });
+                    setStatusConfirmText('');
+                  }}
+                  disabled={statusConfirmSubmitting}>
+                  <Text style={styles.modalButtonText}>Cancel</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[
+                    styles.modalButton,
+                    styles.modalButtonPrimary,
+                    (statusConfirmSubmitting || statusConfirmText.toLowerCase() !== 'confirm') &&
+                      styles.modalButtonDisabled,
+                  ]}
+                  onPress={handleConfirmSubcategoryStatusChange}
+                  disabled={statusConfirmSubmitting || statusConfirmText.toLowerCase() !== 'confirm'}>
+                  {statusConfirmSubmitting ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Text style={styles.modalButtonPrimaryText}>Confirm</Text>
+                  )}
                 </TouchableOpacity>
               </View>
             </View>

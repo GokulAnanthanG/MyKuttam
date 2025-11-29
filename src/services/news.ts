@@ -1,6 +1,6 @@
 import { endpoints } from '../config/api';
 
-export type MediaType = 'IMAGE' | 'VIDEO' | 'AUDIO';
+export type MediaType = 'TEXT' | 'IMAGE' | 'VIDEO' | 'AUDIO';
 
 export type NewsUser = {
   _id: string;
