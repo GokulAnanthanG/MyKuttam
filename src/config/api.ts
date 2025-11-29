@@ -56,6 +56,8 @@ export const endpoints = {
     `${BASE_URL}/api/donations/user/${userIdOrPhone}/category/${categoryId}`,
   userDonationsOverall: (userIdOrPhone: string) =>
     `${BASE_URL}/api/donations/user/${userIdOrPhone}/overall`,
+  // Push notification endpoints
+  fcmToken: `${BASE_URL}/api/user/fcm-token`,
 };
 
 export const ENV = Config?.ENV || 'development';

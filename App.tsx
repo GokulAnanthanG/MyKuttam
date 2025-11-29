@@ -12,6 +12,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Toast from 'react-native-toast-message';
 import { AppNavigator } from './src/navigation/AppNavigator';
 import { AuthProvider } from './src/context/AuthContext';
+import { PushNotificationHandler } from './src/components/PushNotificationHandler';
 import { colors } from './src/theme/colors';
 import { fonts } from './src/theme/typography';
 
@@ -65,6 +66,7 @@ function App() {
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <AuthProvider>
           <NavigationContainer>
+            <PushNotificationHandler />
             <AppNavigator />
           </NavigationContainer>
           <Toast config={toastConfig} position="top" topOffset={60} />

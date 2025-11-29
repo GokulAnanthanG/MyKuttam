@@ -255,7 +255,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const logout = async () => {
-    const { clearStoredUser } = await import('../storage/userRealm');
+    const { clearStoredUser, getStoredToken } = await import('../storage/userRealm');
+    const { deleteFCMToken } = await import('../services/notifications');
+    
+    // Delete FCM token from backend before logout
+    try {
+      const token = await getStoredToken();
+      if (token) {
+        await deleteFCMToken(token);
+      }
+    } catch (error) {
+      console.error('Error deleting FCM token on logout:', error);
+    }
+    
     await clearStoredUser();
     setCurrentUser(null);
   };

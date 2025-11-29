@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "585726956400",
+    "project_id": "app-kuttam",
+    "storage_bucket": "app-kuttam.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:585726956400:android:8259100ed4d83b02d775b5",
+        "android_client_info": {
+          "package_name": "com.mykuttam"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD0e3CMtGCxo3J78QohaXYieO8YxJz-glw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
