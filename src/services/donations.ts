@@ -6,6 +6,7 @@ export type DonationSubcategory = {
   description?: string;
   type: string;
   amount?: number;
+  status?: 'active' | 'inactive';
   totalIncome: number;
   totalExpense: number;
   netAmount: number;
@@ -14,6 +15,7 @@ export type DonationSubcategory = {
 export type DonationCategorySummary = {
   id: string;
   name: string;
+  status?: 'active' | 'inactive';
   overallIncome: number;
   overallExpense: number;
   netAmount: number;
@@ -101,6 +103,14 @@ export type CreateSubcategoryPayload = {
   description?: string;
   type: 'open_donation' | 'specific_amount';
   amount?: number;
+};
+
+export type UpdateSubcategoryPayload = {
+  category_id?: string;
+  title?: string;
+  description?: string;
+  type?: 'open_donation' | 'specific_amount';
+  amount?: number | null;
 };
 
 export type CreateDonationPayload = {
@@ -264,6 +274,24 @@ export const DonationService = {
     return data;
   },
 
+  updateCategoryStatus: async (id: string, status: 'active' | 'inactive'): Promise<CategoryResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.categoryStatus(id), {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ status }),
+    });
+
+    const text = await response.text();
+    const data: CategoryResponse = text ? JSON.parse(text) : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update category status');
+    }
+
+    return data;
+  },
+
   createSubcategory: async (payload: CreateSubcategoryPayload): Promise<SubcategoryResponse> => {
     const headers = await getAuthHeaders();
     const response = await fetch(endpoints.subcategories, {
@@ -279,6 +307,46 @@ export const DonationService = {
 
     if (!response.ok) {
       throw new Error(data.message || 'Failed to create subcategory');
+    }
+
+    return data;
+  },
+
+  updateSubcategory: async (id: string, payload: UpdateSubcategoryPayload): Promise<SubcategoryResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.subcategoryById(id), {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    const data: SubcategoryResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update subcategory');
+    }
+
+    return data;
+  },
+
+  updateSubcategoryStatus: async (id: string, status: 'active' | 'inactive'): Promise<SubcategoryResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.subcategoryStatus(id), {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ status }),
+    });
+
+    const text = await response.text();
+    const data: SubcategoryResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update subcategory status');
     }
 
     return data;

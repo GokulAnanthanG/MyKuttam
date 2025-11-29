@@ -653,6 +653,77 @@ export const NewsScreen = () => {
     }
   }, [resetAudioProgress, stopAudioProgressInterval]);
 
+  const handleAudioSeek = useCallback(async (seconds: number) => {
+    if (!currentAudioId) return;
+
+    try {
+      const info = await SoundPlayer.getInfo();
+      if (typeof info?.currentTime === 'number' && !Number.isNaN(info.currentTime)) {
+        const newPosition = Math.max(0, Math.min(info.duration || 0, info.currentTime + seconds));
+        // Try to seek using the seek method if available
+        if (typeof (SoundPlayer as any).seek === 'function') {
+          (SoundPlayer as any).seek(newPosition);
+        } else if (typeof (SoundPlayer as any).setCurrentTime === 'function') {
+          (SoundPlayer as any).setCurrentTime(newPosition);
+        } else {
+          // If seek is not available, we'll update the position state but can't actually seek
+          console.warn('Seek functionality not available in this version of react-native-sound-player');
+        }
+        setAudioPosition(newPosition);
+      }
+    } catch (error) {
+      console.warn('Audio seek error:', error);
+      // If seek fails, at least update the UI state
+      const info = await SoundPlayer.getInfo().catch(() => null);
+      if (info && typeof info.currentTime === 'number') {
+        setAudioPosition(info.currentTime);
+      }
+    }
+  }, [currentAudioId]);
+
+  const handleAudioRestart = useCallback(async () => {
+    if (!currentAudioId) return;
+
+    try {
+      // Try to seek to 0 using available methods
+      if (typeof (SoundPlayer as any).seek === 'function') {
+        (SoundPlayer as any).seek(0);
+      } else if (typeof (SoundPlayer as any).setCurrentTime === 'function') {
+        (SoundPlayer as any).setCurrentTime(0);
+      } else {
+        // If seek is not available, stop and replay
+        SoundPlayer.stop();
+        // Find the news item and replay
+        const news = [...highlightedNews, ...featuredNews].find((n) => n.id === currentAudioId);
+        if (news && news.media_src) {
+          SoundPlayer.playUrl(news.media_src);
+        }
+      }
+      setAudioPosition(0);
+    } catch (error) {
+      console.warn('Audio restart error:', error);
+      // If restart fails, try to stop and replay
+      try {
+        SoundPlayer.stop();
+        const news = [...highlightedNews, ...featuredNews].find((n) => n.id === currentAudioId);
+        if (news && news.media_src) {
+          SoundPlayer.playUrl(news.media_src);
+        }
+        setAudioPosition(0);
+      } catch (replayError) {
+        console.warn('Audio replay error:', replayError);
+      }
+    }
+  }, [currentAudioId, highlightedNews, featuredNews]);
+
+  const handleAudioForward = useCallback(() => {
+    handleAudioSeek(10);
+  }, [handleAudioSeek]);
+
+  const handleAudioBackward = useCallback(() => {
+    handleAudioSeek(-10);
+  }, [handleAudioSeek]);
+
   const handleAudioToggle = async (news: News) => {
     if (!news.media_src) return;
 
@@ -1425,29 +1496,80 @@ export const NewsScreen = () => {
               <Icon name="music" size={16} color={colors.primary} />
               <Text style={styles.audioLabel}>Audio message</Text>
             </View>
-            <View style={styles.audioControls}>
-              <TouchableOpacity
-                style={[
-                  styles.audioControlButton,
-                  currentAudioId === item.id && isAudioPlaying && styles.audioControlButtonActive,
-                ]}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  handleAudioToggle(item);
-                }}
-                disabled={audioLoading && currentAudioId === item.id}>
-                {audioLoading && currentAudioId === item.id ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Icon
-                    name={currentAudioId === item.id && isAudioPlaying ? 'pause' : 'play'}
-                    size={14}
-                    color="#fff"
-                  />
-                )}
-              </TouchableOpacity>
-              <Text style={styles.audioStatusText}>{getAudioStatusText(item.id)}</Text>
+            <View style={styles.audioControlsRow}>
+              {currentAudioId === item.id ? (
+                <>
+                  <TouchableOpacity
+                    style={styles.audioSeekButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleAudioBackward();
+                    }}
+                    disabled={audioLoading}>
+                    <Icon name="backward" size={14} color={colors.text} />
+                    <Text style={styles.audioSeekText}>10s</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.audioSeekButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleAudioRestart();
+                    }}
+                    disabled={audioLoading}>
+                    <Icon name="refresh" size={14} color={colors.text} />
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.audioControlButton,
+                      isAudioPlaying && styles.audioControlButtonActive,
+                    ]}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleAudioToggle(item);
+                    }}
+                    disabled={audioLoading}>
+                    {audioLoading ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Icon
+                        name={isAudioPlaying ? 'pause' : 'play'}
+                        size={14}
+                        color="#fff"
+                      />
+                    )}
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={styles.audioSeekButton}
+                    onPress={(e) => {
+                      e.stopPropagation();
+                      handleAudioForward();
+                    }}
+                    disabled={audioLoading}>
+                    <Icon name="forward" size={14} color={colors.text} />
+                    <Text style={styles.audioSeekText}>10s</Text>
+                  </TouchableOpacity>
+                </>
+              ) : (
+                <TouchableOpacity
+                  style={styles.audioControlButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    handleAudioToggle(item);
+                  }}
+                  disabled={audioLoading && currentAudioId === item.id}>
+                  {audioLoading && currentAudioId === item.id ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Icon
+                      name={currentAudioId === item.id && isAudioPlaying ? 'pause' : 'play'}
+                      size={14}
+                      color="#fff"
+                    />
+                  )}
+                </TouchableOpacity>
+              )}
             </View>
+            <Text style={styles.audioStatusText}>{getAudioStatusText(item.id)}</Text>
           </View>
         )}
 
@@ -1875,36 +1997,89 @@ export const NewsScreen = () => {
                     <Icon name="music" size={18} color={colors.primary} />
                     <Text style={styles.audioLabel}>Audio message</Text>
                   </View>
-                  <View style={styles.audioControls}>
-                    <TouchableOpacity
-                      style={[
-                        styles.audioControlButton,
-                        currentAudioId === selectedHighlightNews.id &&
-                          isAudioPlaying &&
-                          styles.audioControlButtonActive,
-                      ]}
-                      onPress={() => {
-                        if (selectedHighlightNews) {
-                          handleAudioToggle(selectedHighlightNews);
-                        }
-                      }}
-                      disabled={audioLoading && currentAudioId === selectedHighlightNews.id}>
-                      {audioLoading && currentAudioId === selectedHighlightNews.id ? (
-                        <ActivityIndicator size="small" color="#fff" />
-                      ) : (
-                        <Icon
-                          name={
-                            currentAudioId === selectedHighlightNews.id && isAudioPlaying ? 'pause' : 'play'
+                  <View style={styles.audioControlsRow}>
+                    {currentAudioId === selectedHighlightNews.id ? (
+                      <>
+                        <TouchableOpacity
+                          style={styles.audioSeekButton}
+                          onPress={() => {
+                            if (selectedHighlightNews) {
+                              handleAudioBackward();
+                            }
+                          }}
+                          disabled={audioLoading}>
+                          <Icon name="backward" size={14} color={colors.text} />
+                          <Text style={styles.audioSeekText}>10s</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.audioSeekButton}
+                          onPress={() => {
+                            if (selectedHighlightNews) {
+                              handleAudioRestart();
+                            }
+                          }}
+                          disabled={audioLoading}>
+                          <Icon name="refresh" size={14} color={colors.text} />
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={[
+                            styles.audioControlButton,
+                            isAudioPlaying && styles.audioControlButtonActive,
+                          ]}
+                          onPress={() => {
+                            if (selectedHighlightNews) {
+                              handleAudioToggle(selectedHighlightNews);
+                            }
+                          }}
+                          disabled={audioLoading}>
+                          {audioLoading ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <Icon
+                              name={isAudioPlaying ? 'pause' : 'play'}
+                              size={14}
+                              color="#fff"
+                            />
+                          )}
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          style={styles.audioSeekButton}
+                          onPress={() => {
+                            if (selectedHighlightNews) {
+                              handleAudioForward();
+                            }
+                          }}
+                          disabled={audioLoading}>
+                          <Icon name="forward" size={14} color={colors.text} />
+                          <Text style={styles.audioSeekText}>10s</Text>
+                        </TouchableOpacity>
+                      </>
+                    ) : (
+                      <TouchableOpacity
+                        style={styles.audioControlButton}
+                        onPress={() => {
+                          if (selectedHighlightNews) {
+                            handleAudioToggle(selectedHighlightNews);
                           }
-                          size={14}
-                          color="#fff"
-                        />
-                      )}
-                    </TouchableOpacity>
-                    <Text style={styles.audioStatusText}>
-                      {getAudioStatusText(selectedHighlightNews.id)}
-                    </Text>
+                        }}
+                        disabled={audioLoading && currentAudioId === selectedHighlightNews.id}>
+                        {audioLoading && currentAudioId === selectedHighlightNews.id ? (
+                          <ActivityIndicator size="small" color="#fff" />
+                        ) : (
+                          <Icon
+                            name={
+                              currentAudioId === selectedHighlightNews.id && isAudioPlaying ? 'pause' : 'play'
+                            }
+                            size={14}
+                            color="#fff"
+                          />
+                        )}
+                      </TouchableOpacity>
+                    )}
                   </View>
+                  <Text style={styles.audioStatusText}>
+                    {getAudioStatusText(selectedHighlightNews.id)}
+                  </Text>
                 </View>
               )}
 
@@ -2457,6 +2632,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 12,
   },
+  audioControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
   audioControlButton: {
     width: 40,
     height: 40,
@@ -2468,10 +2650,30 @@ const styles = StyleSheet.create({
   audioControlButtonActive: {
     backgroundColor: colors.danger,
   },
+  audioSeekButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingHorizontal: 8,
+    paddingVertical: 6,
+    borderRadius: 8,
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minWidth: 50,
+  },
+  audioSeekText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+  },
   audioStatusText: {
     fontFamily: fonts.body,
-    fontSize: 14,
-    color: colors.text,
+    fontSize: 13,
+    color: colors.textMuted,
+    marginTop: 10,
+    textAlign: 'center',
   },
   featuredActions: {
     flexDirection: 'row',

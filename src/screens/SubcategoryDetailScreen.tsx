@@ -171,6 +171,15 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const [mappingSubmitting, setMappingSubmitting] = useState(false);
   const [subcategoryManagers, setSubcategoryManagers] = useState<DonationManagerWithMapping[]>([]);
 
+  // Edit subcategory states
+  const [editSubcategoryModalVisible, setEditSubcategoryModalVisible] = useState(false);
+  const [editSubcategoryTitle, setEditSubcategoryTitle] = useState('');
+  const [editSubcategoryDescription, setEditSubcategoryDescription] = useState('');
+  const [editSubcategoryType, setEditSubcategoryType] = useState<'open_donation' | 'specific_amount'>('open_donation');
+  const [editSubcategoryAmount, setEditSubcategoryAmount] = useState('');
+  const [editSubcategorySubmitting, setEditSubcategorySubmitting] = useState(false);
+  const [editSubcategoryConfirmText, setEditSubcategoryConfirmText] = useState('');
+
   // Filter and sort states
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
@@ -510,6 +519,129 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       });
     } finally {
       setMappingLoading(false);
+    }
+  };
+
+  const handleOpenEditSubcategoryModal = () => {
+    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUB_ADMIN') {
+      Alert.alert('Access denied', 'Only ADMIN and SUB_ADMIN can edit subcategories.');
+      return;
+    }
+    // Initialize form with current values
+    setEditSubcategoryTitle(subcategoryTitle);
+    setEditSubcategoryDescription(subcategoryDescription || '');
+    setEditSubcategoryType(subcategoryType as 'open_donation' | 'specific_amount');
+    setEditSubcategoryAmount(subcategoryAmount ? String(subcategoryAmount) : '');
+    setEditSubcategoryConfirmText('');
+    setEditSubcategoryModalVisible(true);
+  };
+
+  const handleUpdateSubcategory = async () => {
+    if (editSubcategoryConfirmText.toLowerCase() !== 'confirm') {
+      Toast.show({
+        type: 'error',
+        text1: 'Confirmation required',
+        text2: 'Please type "confirm" to update the subcategory.',
+      });
+      return;
+    }
+
+    if (!editSubcategoryTitle.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation error',
+        text2: 'Title is required.',
+      });
+      return;
+    }
+
+    let parsedAmount: number | null | undefined;
+    if (editSubcategoryType === 'specific_amount') {
+      parsedAmount = Number(editSubcategoryAmount);
+      if (!parsedAmount || Number.isNaN(parsedAmount) || parsedAmount <= 0) {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid amount',
+          text2: 'Provide a valid amount for this subcategory.',
+        });
+        return;
+      }
+    } else {
+      parsedAmount = null; // Clear amount when switching to open_donation
+    }
+
+    try {
+      setEditSubcategorySubmitting(true);
+      const payload: {
+        category_id?: string;
+        title?: string;
+        description?: string;
+        type?: 'open_donation' | 'specific_amount';
+        amount?: number | null;
+      } = {};
+
+      // Only include fields that have changed
+      if (editSubcategoryTitle.trim() !== subcategoryTitle) {
+        payload.title = editSubcategoryTitle.trim();
+      }
+      if (editSubcategoryDescription.trim() !== (subcategoryDescription || '')) {
+        payload.description = editSubcategoryDescription.trim() || undefined;
+      }
+      if (editSubcategoryType !== subcategoryType) {
+        payload.type = editSubcategoryType;
+        payload.amount = parsedAmount;
+      } else if (editSubcategoryType === 'specific_amount') {
+        const currentAmount = subcategoryAmount || 0;
+        if (parsedAmount !== currentAmount) {
+          payload.amount = parsedAmount;
+        }
+      }
+
+      // If switching from specific_amount to open_donation, ensure amount is null
+      if (subcategoryType === 'specific_amount' && editSubcategoryType === 'open_donation') {
+        payload.amount = null;
+      }
+
+      if (Object.keys(payload).length === 0) {
+        Toast.show({
+          type: 'info',
+          text1: 'No changes',
+          text2: 'No changes were made to the subcategory.',
+        });
+        setEditSubcategoryModalVisible(false);
+        return;
+      }
+
+      const response = await DonationService.updateSubcategory(subcategoryId, payload);
+      if (response.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Subcategory updated',
+          text2: 'The subcategory has been updated successfully.',
+        });
+        setEditSubcategoryModalVisible(false);
+        // Update navigation params with new values if response contains updated data
+        if (response.data) {
+          navigation.setParams({
+            subcategoryTitle: response.data.title || subcategoryTitle,
+            subcategoryDescription: response.data.description || subcategoryDescription,
+            subcategoryType: (response.data.type as 'open_donation' | 'specific_amount') || subcategoryType,
+            subcategoryAmount: response.data.amount || subcategoryAmount,
+          });
+        }
+        // Refresh the data
+        handleRefresh();
+      } else {
+        throw new Error(response.message || 'Failed to update subcategory');
+      }
+    } catch (err) {
+      Toast.show({
+        type: 'error',
+        text1: 'Update failed',
+        text2: err instanceof Error ? err.message : 'Unable to update subcategory',
+      });
+    } finally {
+      setEditSubcategorySubmitting(false);
     }
   };
 
@@ -1718,7 +1850,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                 onPress={() => setShowStartDatePicker(true)}
                 activeOpacity={0.7}>
                 <Text style={[styles.dateInputText, !startDate && styles.dateInputPlaceholder]}>
-                  {startDate ? formatDateForDisplay(startDate) : 'Select start date'}
+                  {startDate ? formatDateForDisplay(startDate) : 'Start date'}
                 </Text>
                 <Icon name="calendar" size={14} color={colors.textMuted} />
               </TouchableOpacity>
@@ -1730,7 +1862,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                 onPress={() => setShowEndDatePicker(true)}
                 activeOpacity={0.7}>
                 <Text style={[styles.dateInputText, !endDate && styles.dateInputPlaceholder]}>
-                  {endDate ? formatDateForDisplay(endDate) : 'Select end date'}
+                  {endDate ? formatDateForDisplay(endDate) : 'End date'}
                 </Text>
                 <Icon name="calendar" size={14} color={colors.textMuted} />
               </TouchableOpacity>
@@ -1914,6 +2046,13 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         label: 'Map manager',
         icon: 'user-plus',
         onPress: handleMapManager,
+        visible: currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN',
+      },
+      {
+        key: 'edit',
+        label: 'Edit subcategory',
+        icon: 'edit',
+        onPress: handleOpenEditSubcategoryModal,
         visible: currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN',
       },
     ].filter((action) => action.visible);
@@ -2152,6 +2291,123 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
               )}
             </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Edit subcategory modal */}
+      <Modal
+        visible={editSubcategoryModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditSubcategoryModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+            style={styles.modalKeyboardWrapper}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeaderRow}>
+                <Text style={styles.modalTitle}>Edit subcategory</Text>
+                <TouchableOpacity onPress={() => setEditSubcategoryModalVisible(false)}>
+                  <Icon name="close" size={18} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Title *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="Subcategory title"
+                    value={editSubcategoryTitle}
+                    onChangeText={setEditSubcategoryTitle}
+                    placeholderTextColor={colors.textMuted}
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Description</Text>
+                  <TextInput
+                    style={[styles.input, styles.multiline]}
+                    placeholder="Optional description"
+                    value={editSubcategoryDescription}
+                    onChangeText={setEditSubcategoryDescription}
+                    placeholderTextColor={colors.textMuted}
+                    multiline
+                  />
+                </View>
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Donation type</Text>
+                  <View style={styles.chipRow}>
+                    {(['open_donation', 'specific_amount'] as const).map((type) => (
+                      <TouchableOpacity
+                        key={type}
+                        style={[styles.chip, editSubcategoryType === type && styles.chipActive]}
+                        onPress={() => {
+                          setEditSubcategoryType(type);
+                          if (type === 'open_donation') {
+                            setEditSubcategoryAmount('');
+                          }
+                        }}>
+                        <Text
+                          style={[
+                            styles.chipText,
+                            editSubcategoryType === type && styles.chipTextActive,
+                          ]}>
+                          {type === 'open_donation' ? 'Open Donation' : 'Specific Amount'}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </View>
+                </View>
+                {editSubcategoryType === 'specific_amount' && (
+                  <View style={styles.inputGroup}>
+                    <Text style={styles.inputLabel}>Fixed amount (₹) *</Text>
+                    <TextInput
+                      style={styles.input}
+                      placeholder="e.g. 1000"
+                      keyboardType="numeric"
+                      value={editSubcategoryAmount}
+                      onChangeText={setEditSubcategoryAmount}
+                      placeholderTextColor={colors.textMuted}
+                    />
+                  </View>
+                )}
+                <View style={styles.inputGroup}>
+                  <Text style={styles.inputLabel}>Type "confirm" to update *</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="confirm"
+                    value={editSubcategoryConfirmText}
+                    onChangeText={setEditSubcategoryConfirmText}
+                    placeholderTextColor={colors.textMuted}
+                    autoCapitalize="none"
+                  />
+                </View>
+              </ScrollView>
+              <TouchableOpacity
+                style={[
+                  styles.submitButton,
+                  (editSubcategorySubmitting ||
+                    !editSubcategoryTitle.trim() ||
+                    (editSubcategoryType === 'specific_amount' && !editSubcategoryAmount.trim())) &&
+                    styles.submitButtonDisabled,
+                ]}
+                onPress={handleUpdateSubcategory}
+                activeOpacity={0.9}
+                disabled={
+                  editSubcategorySubmitting ||
+                  !editSubcategoryTitle.trim() ||
+                  (editSubcategoryType === 'specific_amount' && !editSubcategoryAmount.trim())
+                }>
+                {editSubcategorySubmitting ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Icon name="check" size={14} color="#fff" />
+                    <Text style={styles.submitButtonText}>Update subcategory</Text>
+                  </>
+                )}
+              </TouchableOpacity>
+            </View>
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -2586,7 +2842,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                           styles.dateInputText,
                           !userDonationStartDate && styles.dateInputPlaceholder,
                         ]}>
-                        {userDonationStartDate ? formatDateForDisplay(userDonationStartDate) : 'Select start date'}
+                        {userDonationStartDate ? formatDateForDisplay(userDonationStartDate) : 'Start date'}
                       </Text>
                       <Icon name="calendar" size={14} color={colors.textMuted} />
                     </TouchableOpacity>
@@ -2599,7 +2855,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                       activeOpacity={0.7}>
                       <Text
                         style={[styles.dateInputText, !userDonationEndDate && styles.dateInputPlaceholder]}>
-                        {userDonationEndDate ? formatDateForDisplay(userDonationEndDate) : 'Select end date'}
+                        {userDonationEndDate ? formatDateForDisplay(userDonationEndDate) : 'End date'}
                       </Text>
                       <Icon name="calendar" size={14} color={colors.textMuted} />
                     </TouchableOpacity>

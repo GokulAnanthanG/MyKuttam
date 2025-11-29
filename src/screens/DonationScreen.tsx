@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Modal,
   Platform,
   RefreshControl,
   StyleSheet,
+  Switch,
   Text,
   TextInput,
   TouchableOpacity,
@@ -134,6 +136,81 @@ export const DonationScreen = () => {
       }
     },
     [pinnedCategoryIds],
+  );
+
+  const handleToggleCategoryStatus = useCallback(
+    async (categoryId: string, currentStatus: 'active' | 'inactive' | undefined) => {
+      if (!isAdminUser) {
+        return;
+      }
+
+      const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+      
+      try {
+        const response = await DonationService.updateCategoryStatus(categoryId, newStatus);
+        if (response.success) {
+          // Update local state
+          setCategories((prev) =>
+            prev.map((cat) =>
+              cat.id === categoryId ? { ...cat, status: newStatus } : cat,
+            ),
+          );
+          Toast.show({
+            type: 'success',
+            text1: 'Status updated',
+            text2: `Category is now ${newStatus}`,
+          });
+        }
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: error instanceof Error ? error.message : 'Failed to update category status',
+        });
+      }
+    },
+    [isAdminUser],
+  );
+
+  const handleToggleSubcategoryStatus = useCallback(
+    async (subcategoryId: string, categoryId: string, currentStatus: 'active' | 'inactive' | undefined) => {
+      if (!isAdminUser) {
+        return;
+      }
+
+      const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+      
+      try {
+        const response = await DonationService.updateSubcategoryStatus(subcategoryId, newStatus);
+        if (response.success) {
+          // Update local state
+          setCategories((prev) =>
+            prev.map((cat) =>
+              cat.id === categoryId
+                ? {
+                    ...cat,
+                    subcategories: cat.subcategories?.map((sub) =>
+                      sub.id === subcategoryId ? { ...sub, status: newStatus } : sub,
+                    ),
+                  }
+                : cat,
+            ),
+          );
+          Toast.show({
+            type: 'success',
+            text1: 'Status updated',
+            text2: `Subcategory is now ${newStatus}`,
+          });
+        }
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: error instanceof Error ? error.message : 'Failed to update subcategory status',
+        });
+      }
+    },
+    [isAdminUser],
   );
 
   const handleRefresh = useCallback(() => {
@@ -313,6 +390,9 @@ export const DonationScreen = () => {
   const renderCategory = ({ item }: { item: DonationCategorySummary }) => {
     const hasSurplus = (item.netAmount || 0) >= 0;
     const isPinned = pinnedCategoryIds.has(item.id);
+    const isCategoryActive = item.status !== 'inactive';
+    const categoryStatus = item.status || 'active';
+    
     return (
       <View style={[styles.categoryCard, isPinned && styles.categoryCardPinned]}>
         <View style={styles.categoryHeader}>
@@ -329,6 +409,17 @@ export const DonationScreen = () => {
             </Text>
           </View>
           <View style={styles.categoryHeaderRight}>
+            {isAdminUser && (
+              <View style={styles.statusToggleContainer}>
+                <Text style={styles.statusLabel}>{categoryStatus === 'active' ? 'Active' : 'Inactive'}</Text>
+                <Switch
+                  value={categoryStatus === 'active'}
+                  onValueChange={() => handleToggleCategoryStatus(item.id, categoryStatus)}
+                  trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                  thumbColor={categoryStatus === 'active' ? colors.primary : colors.textMuted}
+                />
+              </View>
+            )}
             <TouchableOpacity
               onPress={() => handleTogglePin(item.id)}
               style={styles.pinButton}
@@ -340,10 +431,6 @@ export const DonationScreen = () => {
                 style={[isPinned && styles.pinButtonActive]}
               />
             </TouchableOpacity>
-            <View style={[styles.netBadge, hasSurplus ? styles.netBadgePositive : styles.netBadgeNegative]}>
-              <Icon name={hasSurplus ? 'arrow-up' : 'arrow-down'} size={12} color="#fff" />
-              <Text style={styles.netBadgeText}>{hasSurplus ? 'Surplus' : 'Deficit'}</Text>
-            </View>
           </View>
         </View>
 
@@ -375,21 +462,53 @@ export const DonationScreen = () => {
           <View style={styles.subcategorySection}>
             <Text style={styles.subcategoryTitle}>Subcategories</Text>
             <View style={styles.subcategoryCardGrid}>
-              {item.subcategories.map((sub) => (
-                <View key={sub.id} style={styles.subcategoryCard}>
-                  <Text style={styles.subcategoryCardTitle}>{sub.title}</Text>
-                  {sub.description ? (
-                    <Text style={styles.subcategoryCardDescription}>{sub.description}</Text>
-                  ) : null}
-                  <TouchableOpacity
-                    style={styles.subcategoryButton}
-                    onPress={() => handleNavigateToSubcategory(item, sub)}
-                    activeOpacity={0.85}>
-                    <Icon name="heart" size={14} color="#fff" />
-                    <Text style={styles.subcategoryButtonText}>Donate now</Text>
-                  </TouchableOpacity>
-                </View>
-              ))}
+              {item.subcategories.map((sub) => {
+                const isSubcategoryActive = sub.status !== 'inactive';
+                const subcategoryStatus = sub.status || 'active';
+                const isDisabled = !isCategoryActive || !isSubcategoryActive;
+                
+                return (
+                  <View key={sub.id} style={styles.subcategoryCard}>
+                    <View style={styles.subcategoryCardHeader}>
+                      <Text style={styles.subcategoryCardTitle}>{sub.title}</Text>
+                      {isAdminUser && (
+                        <View style={styles.subcategoryStatusToggle}>
+                          <Switch
+                            value={subcategoryStatus === 'active'}
+                            onValueChange={() => handleToggleSubcategoryStatus(sub.id, item.id, subcategoryStatus)}
+                            trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                            thumbColor={subcategoryStatus === 'active' ? colors.primary : colors.textMuted}
+                            disabled={!isCategoryActive}
+                          />
+                        </View>
+                      )}
+                    </View>
+                    {sub.description ? (
+                      <Text style={styles.subcategoryCardDescription}>{sub.description}</Text>
+                    ) : null}
+                    <TouchableOpacity
+                      style={[styles.subcategoryButton, isDisabled && styles.subcategoryButtonDisabled]}
+                      onPress={() => {
+                        if (isDisabled) {
+                          if (!isCategoryActive) {
+                            Alert.alert('Category Inactive', 'This category is inactive. Please contact admin.');
+                          } else if (!isSubcategoryActive) {
+                            Alert.alert('Subcategory Inactive', 'Contact admin, this is inactive.');
+                          }
+                        } else {
+                          handleNavigateToSubcategory(item, sub);
+                        }
+                      }}
+                      activeOpacity={isDisabled ? 1 : 0.85}
+                      disabled={isDisabled}>
+                      <Icon name="heart" size={14} color={isDisabled ? colors.textMuted : '#fff'} />
+                      <Text style={[styles.subcategoryButtonText, isDisabled && styles.subcategoryButtonTextDisabled]}>
+                        Donate now
+                      </Text>
+                    </TouchableOpacity>
+                  </View>
+                );
+              })}
             </View>
           </View>
         ) : (
@@ -758,6 +877,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     gap: 8,
   },
+  statusToggleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    marginRight: 4,
+  },
+  statusLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
+  },
   pinButton: {
     padding: 4,
   },
@@ -773,25 +903,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     marginTop: 4,
-  },
-  netBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 6,
-    borderRadius: 20,
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-  },
-  netBadgePositive: {
-    backgroundColor: '#ecfdf3',
-  },
-  netBadgeNegative: {
-    backgroundColor: '#fef3f2',
-  },
-  netBadgeText: {
-    fontFamily: fonts.body,
-    fontSize: 12,
-    color: colors.text,
   },
   amountRow: {
     flexDirection: 'row',
@@ -868,11 +979,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
+    marginBottom: 4,
   },
   subcategoryCardTitle: {
     fontFamily: fonts.heading,
     fontSize: 14,
     color: colors.text,
+    flex: 1,
+  },
+  subcategoryStatusToggle: {
+    marginLeft: 8,
   },
   subcategoryCardAmount: {
     fontFamily: fonts.heading,
@@ -908,10 +1024,17 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 8,
   },
+  subcategoryButtonDisabled: {
+    backgroundColor: colors.border,
+    opacity: 0.6,
+  },
   subcategoryButtonText: {
     fontFamily: fonts.heading,
     fontSize: 13,
     color: '#fff',
+  },
+  subcategoryButtonTextDisabled: {
+    color: colors.textMuted,
   },
   emptySubcategories: {
     marginTop: 16,

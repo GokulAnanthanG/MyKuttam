@@ -41,8 +41,10 @@ export const endpoints = {
   donationCategoriesSummary: `${BASE_URL}/api/donations/categories-summary`,
   categories: `${BASE_URL}/api/categories`,
   categoryById: (id: string) => `${BASE_URL}/api/categories/${id}`,
+  categoryStatus: (id: string) => `${BASE_URL}/api/categories/${id}/status`,
   subcategories: `${BASE_URL}/api/subcategories`,
   subcategoryById: (id: string) => `${BASE_URL}/api/subcategories/${id}`,
+  subcategoryStatus: (id: string) => `${BASE_URL}/api/subcategories/${id}/status`,
   // Expense endpoints
   expenses: `${BASE_URL}/api/expenses`,
   expenseById: (id: string) => `${BASE_URL}/api/expenses/${id}`,
