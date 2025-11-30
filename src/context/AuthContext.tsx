@@ -16,7 +16,8 @@ type AuthContextType = {
   isAuthenticated: boolean;
   login: (phone: string, password: string) => Promise<boolean>;
   requestOtp: (phone: string) => Promise<boolean>;
-  register: (user: StoredUser, otp: string) => Promise<boolean>;
+  validateOtp: (phone: string, otp: string) => Promise<boolean>;
+  register: (user: StoredUser) => Promise<boolean>;
   updateProfile: (updates: Partial<Pick<StoredUser, 'name' | 'dob' | 'father_name' | 'address' | 'avatar'>> & { avatarFile?: { uri: string; type: string; name: string } }) => Promise<boolean>;
   resetPassword: (currentPassword: string, newPassword: string) => Promise<boolean>;
   forgotPasswordRequestOtp: (phone: string) => Promise<boolean>;
@@ -36,8 +37,25 @@ const getErrorMessage = (error: unknown) => {
     return error;
   }
 
-  if (typeof error === 'object' && 'message' in error) {
-    return String((error as { message?: string }).message);
+  if (typeof error === 'object') {
+    // Check for ApiError with message
+    if ('message' in error && typeof (error as { message?: string }).message === 'string') {
+      const message = (error as { message?: string }).message;
+      if (message) {
+        return message;
+      }
+    }
+    
+    // Check for error property
+    if ('error' in error) {
+      const errorValue = (error as { error?: unknown }).error;
+      if (typeof errorValue === 'string') {
+        return errorValue;
+      }
+      if (typeof errorValue === 'object' && errorValue !== null && 'message' in errorValue) {
+        return String((errorValue as { message?: string }).message);
+      }
+    }
   }
 
   return 'Something went wrong. Please try again.';
@@ -133,10 +151,77 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const register = async (user: StoredUser, otp: string): Promise<boolean> => {
+  const validateOtp = async (phone: string, otp: string): Promise<boolean> => {
+    const trimmedPhone = phone?.trim() || '';
+    const trimmedOtp = otp?.trim() || '';
+    
+    console.log('AuthContext.validateOtp: Called with phone:', trimmedPhone);
+    console.log('AuthContext.validateOtp: Called with OTP length:', trimmedOtp.length);
+    
+    if (!trimmedPhone || !trimmedOtp) {
+      console.error('AuthContext.validateOtp: Phone or OTP is empty!', { phone: trimmedPhone, otpLength: trimmedOtp.length });
+      showError('Phone and OTP are required');
+      return false;
+    }
+
     try {
       setLoading(true);
-      const result = await AuthService.register({ user, OTP: otp });
+      console.log('AuthContext.validateOtp: Calling AuthService.validateOtp with:', { phone: trimmedPhone, OTP: trimmedOtp });
+      const result = await AuthService.validateOtp({ phone: trimmedPhone, OTP: trimmedOtp });
+      console.log('AuthContext.validateOtp: Service result:', { success: result.success, validated: result.data?.validated });
+      
+      if (result.success && result.data?.validated) {
+        showSuccess(result.message || 'OTP validated successfully!');
+        return true;
+      } else {
+        // Show error if validation failed - use server message if available
+        const errorMessage = result.message || 'Invalid or expired OTP. Please try again.';
+        showError(errorMessage);
+      }
+      return false;
+    } catch (error: any) {
+      console.error('AuthContext.validateOtp: Error caught:', error);
+      
+      // Extract clear error message
+      let errorMessage = 'Failed to validate OTP. Please try again.';
+      
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      } else if (error?.status) {
+        // Handle different HTTP status codes
+        switch (error.status) {
+          case 400:
+            errorMessage = error.message || 'Invalid request. Please check your phone number and OTP.';
+            break;
+          case 401:
+            errorMessage = error.message || 'Unauthorized. Please request a new OTP.';
+            break;
+          case 404:
+            errorMessage = error.message || 'OTP not found. Please request a new OTP.';
+            break;
+          case 500:
+          case 502:
+          case 503:
+            errorMessage = error.message || 'Server error. Please try again later.';
+            break;
+          default:
+            errorMessage = error.message || 'Failed to validate OTP. Please try again.';
+        }
+      }
+      
+      showError(errorMessage);
+      return false;
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const register = async (user: StoredUser): Promise<boolean> => {
+    try {
+      setLoading(true);
+      const result = await AuthService.register({ user });
       if (result.success && result.user && result.token) {
         // Save user and token to Realm for offline access and session persistence
         await saveUserToRealm(result.user, result.token);
@@ -280,6 +365,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         isAuthenticated,
         login,
         requestOtp,
+        validateOtp,
         register,
         updateProfile,
         resetPassword,

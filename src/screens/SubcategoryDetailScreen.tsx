@@ -98,6 +98,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     subcategoryIncome = 0,
     subcategoryExpense = 0,
     subcategoryNet = 0,
+    categoryStatus = 'active',
+    subcategoryStatus = 'active',
   } = route.params;
 
   const [donations, setDonations] = useState<DonationRecord[]>([]);
@@ -707,6 +709,25 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   };
 
   const handleDonateNow = () => {
+    // Check if category or subcategory is inactive
+    if (categoryStatus === 'inactive') {
+      Toast.show({
+        type: 'error',
+        text1: 'Category Inactive',
+        text2: 'This category is inactive. Please contact admin.',
+      });
+      return;
+    }
+    
+    if (subcategoryStatus === 'inactive') {
+      Toast.show({
+        type: 'error',
+        text1: 'Subcategory Inactive',
+        text2: 'This subcategory is inactive. Please contact admin.',
+      });
+      return;
+    }
+
     if (subcategoryType === 'specific_amount') {
       // Direct payment for specific amount
       if (!subcategoryAmount || subcategoryAmount <= 0) {
@@ -2018,6 +2039,10 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     </View>
   );
 
+  const isSubcategoryActive = useMemo(() => {
+    return categoryStatus === 'active' && subcategoryStatus === 'active';
+  }, [categoryStatus, subcategoryStatus]);
+
   const floatingActions = useMemo(() => {
     return [
       {
@@ -2026,6 +2051,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         icon: 'heart',
         onPress: handleDonateNow,
         visible: true,
+        disabled: !isSubcategoryActive,
       },
       {
         key: 'offline',
@@ -2056,7 +2082,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         visible: currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN',
       },
     ].filter((action) => action.visible);
-  }, [canManageSubcategory, currentUser?.role]);
+  }, [canManageSubcategory, currentUser?.role, isSubcategoryActive]);
 
   if (loading && !refreshing) {
     return (
@@ -2085,9 +2111,16 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           {fabVisible && (
             <View style={styles.fabContainer}>
               {floatingActions.map((action) => (
-                <TouchableOpacity key={action.key} style={styles.fabButton} onPress={action.onPress} activeOpacity={0.85}>
-                  <Icon name={action.icon} size={16} color="#fff" />
-                  <Text style={styles.fabLabel}>{action.label}</Text>
+                <TouchableOpacity
+                  key={action.key}
+                  style={[styles.fabButton, (action as any).disabled && styles.fabButtonDisabled]}
+                  onPress={action.onPress}
+                  activeOpacity={0.85}
+                  disabled={(action as any).disabled}>
+                  <Icon name={action.icon} size={16} color={(action as any).disabled ? colors.textMuted : "#fff"} />
+                  <Text style={[styles.fabLabel, (action as any).disabled && styles.fabLabelDisabled]}>
+                    {action.label}
+                  </Text>
                 </TouchableOpacity>
               ))}
             </View>
@@ -3767,10 +3800,17 @@ const styles = StyleSheet.create({
     shadowRadius: 6,
     elevation: 6,
   },
+  fabButtonDisabled: {
+    backgroundColor: colors.border,
+    opacity: 0.6,
+  },
   fabLabel: {
     fontFamily: fonts.heading,
     fontSize: 13,
     color: '#fff',
+  },
+  fabLabelDisabled: {
+    color: colors.textMuted,
   },
   fabToggle: {
     position: 'absolute',

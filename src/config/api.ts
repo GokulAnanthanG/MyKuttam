@@ -13,6 +13,7 @@ export const BASE_URL = Config?.API_BASE_URL || '';
 export const endpoints = {
   login: `${BASE_URL}/api/registration/login`,
   sendOtp: `${BASE_URL}/api/registration/before-register`,
+  validateOtp: `${BASE_URL}/api/registration/validate-otp`,
   register: `${BASE_URL}/api/registration/register`,
   updateProfile: `${BASE_URL}/api/user/update-profile`,
   resetPassword: `${BASE_URL}/api/user/reset-password`,

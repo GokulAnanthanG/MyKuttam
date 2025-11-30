@@ -38,12 +38,21 @@ export const usePushNotification = (): UsePushNotificationReturn => {
   const [isLoading, setIsLoading] = useState(true);
   const [isPermissionGranted, setIsPermissionGranted] = useState(false);
   const appState = useRef(AppState.currentState);
+  const isRequestingPermission = useRef(false);
 
   /**
    * Request notification permissions
    */
   const requestPermission = async (): Promise<boolean> => {
+    // Prevent multiple simultaneous permission requests
+    if (isRequestingPermission.current) {
+      console.log('Permission request already in progress');
+      return isPermissionGranted;
+    }
+
     try {
+      isRequestingPermission.current = true;
+      
       if (Platform.OS === 'ios') {
         const authStatus = await messaging().requestPermission();
         const enabled =
@@ -69,6 +78,8 @@ export const usePushNotification = (): UsePushNotificationReturn => {
       console.error('Error requesting notification permission:', error);
       setIsPermissionGranted(false);
       return false;
+    } finally {
+      isRequestingPermission.current = false;
     }
   };
 
@@ -218,7 +229,7 @@ export const usePushNotification = (): UsePushNotificationReturn => {
   }, [navigation]);
 
   /**
-   * Initialize: Check permission and get token
+   * Initialize: Request permission on app launch and get token
    */
   useEffect(() => {
     const initialize = async () => {
@@ -235,8 +246,12 @@ export const usePushNotification = (): UsePushNotificationReturn => {
 
         setIsPermissionGranted(hasPermission);
 
-        if (hasPermission) {
-          // Get FCM token
+        // If permission is not granted, request it immediately on app launch
+        if (!hasPermission) {
+          console.log('Notification permission not granted, requesting...');
+          await requestPermission();
+        } else {
+          // Permission already granted, get FCM token
           await getToken();
         }
       } catch (error) {

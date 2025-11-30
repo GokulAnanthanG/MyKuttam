@@ -9,11 +9,15 @@ type LoginPayload = {
 
 type RegistrationPayload = {
   user: StoredUser;
-  OTP: string;
 };
 
 type RequestOtpPayload = {
   phone: string;
+};
+
+type ValidateOtpPayload = {
+  phone: string;
+  OTP: string;
 };
 
 type ApiError = {
@@ -23,19 +27,57 @@ type ApiError = {
 
 const handleResponse = async <T>(response: Response): Promise<T> => {
   const text = await response.text();
-  const data = text ? (JSON.parse(text) as T) : ({} as T);
+  let data: any = {};
+  
+  try {
+    data = text ? JSON.parse(text) : {};
+  } catch (parseError) {
+    console.error('Error parsing response:', parseError);
+    data = { message: 'Invalid response from server' };
+  }
 
   if (!response.ok) {
+    // Extract error message from response
+    let errorMessage = 'Something went wrong. Please try again.';
+    
+    if (data?.message) {
+      errorMessage = data.message;
+    } else if (data?.error) {
+      errorMessage = typeof data.error === 'string' ? data.error : data.error.message || errorMessage;
+    } else if (text && !data.message) {
+      // If response has text but no parsed message, use the text
+      errorMessage = text;
+    }
+
+    // Provide user-friendly messages based on status code
+    if (response.status === 400) {
+      if (!errorMessage || errorMessage === 'Something went wrong. Please try again.') {
+        errorMessage = 'Invalid request. Please check your input and try again.';
+      }
+    } else if (response.status === 401) {
+      errorMessage = 'Unauthorized. Please check your credentials.';
+    } else if (response.status === 404) {
+      errorMessage = 'Resource not found.';
+    } else if (response.status >= 500) {
+      errorMessage = 'Server error. Please try again later.';
+    }
+
     const error: ApiError = {
-      message:
-        (data as { message?: string })?.message ??
-        'Something went wrong. Please try again.',
+      message: errorMessage,
       status: response.status,
     };
+    
+    console.error('API Error Response:', {
+      status: response.status,
+      statusText: response.statusText,
+      message: errorMessage,
+      data: data,
+    });
+    
     throw error;
   }
 
-  return data;
+  return data as T;
 };
 
 type LoginResponse = {
@@ -106,13 +148,66 @@ export const AuthService = {
     return handleResponse<{ message?: string }>(response);
   },
 
+  validateOtp: async (payload: ValidateOtpPayload) => {
+    // Ensure phone and OTP are not empty
+    const phone = payload.phone?.trim() || '';
+    const otp = payload.OTP?.trim() || '';
+    
+    if (!phone || !otp) {
+      throw new Error('Phone and OTP are required');
+    }
+
+    const requestPayload = {
+      phone: phone,
+      OTP: otp,
+    };
+
+    console.log('AuthService.validateOtp: Calling API with payload:', { phone: requestPayload.phone, OTP: '***' });
+    console.log('AuthService.validateOtp: Endpoint:', endpoints.validateOtp);
+    console.log('AuthService.validateOtp: Full payload keys:', Object.keys(requestPayload));
+    console.log('AuthService.validateOtp: Phone value:', requestPayload.phone);
+    console.log('AuthService.validateOtp: OTP length:', requestPayload.OTP.length);
+    
+    try {
+      const response = await fetch(endpoints.validateOtp, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(requestPayload),
+      });
+
+      console.log('AuthService.validateOtp: Response status:', response.status);
+      const result = await handleResponse<{
+        success: boolean;
+        message: string;
+        data?: {
+          phone: string;
+          validated: boolean;
+        };
+      }>(response);
+      console.log('AuthService.validateOtp: Response result:', { success: result.success, validated: result.data?.validated });
+      
+      return result;
+    } catch (error) {
+      console.error('AuthService.validateOtp: Fetch error:', error);
+      // Re-throw to let the caller handle it
+      throw error;
+    }
+  },
+
   register: async (payload: RegistrationPayload) => {
+    // The API expects the user object to be nested
+    const requestBody = {
+      user: payload.user,
+    };
+
     const response = await fetch(endpoints.register, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(requestBody),
     });
 
     const result = await handleResponse<{

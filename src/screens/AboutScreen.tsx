@@ -114,7 +114,7 @@ export const AboutScreen = () => {
             style={styles.contactButton}
             onPress={() => {
               // You can add navigation or action here
-              Linking.openURL('mailto:contact@kuttam.com').catch(() => {});
+              Linking.openURL('mailto:gokulananthan230@gmail.com').catch(() => {});
             }}
             activeOpacity={0.8}>
             <Icon name="envelope" size={16} color={colors.primary} />

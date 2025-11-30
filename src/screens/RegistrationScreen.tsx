@@ -28,7 +28,7 @@ type FormState = {
 
 export const RegistrationScreen = ({ navigation, route }: Props) => {
   const { loading, register } = useAuth();
-  const { phone, otp } = route.params;
+  const { phone } = route.params;
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [form, setForm] = useState<FormState>({
     name: '',
@@ -90,7 +90,7 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
       address: form.address ? form.address.trim() : undefined,
     };
 
-    const success = await register(user, otp);
+    const success = await register(user);
     if (success) {
       navigation.replace('MainTabs');
     }
@@ -99,7 +99,7 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
   return (
     <AuthSimpleLayout
       title="Complete Registration"
-      subtitle={`OTP verified for ${phone}. Please fill in your details to complete your registration.`}>
+      subtitle={`OTP validated for ${phone}. Please fill in your details to complete your registration.`}>
       <View style={styles.form}>
         <AppTextInput
           label="Full name"

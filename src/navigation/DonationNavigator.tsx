@@ -20,6 +20,8 @@ export type DonationStackParamList = {
     subcategoryIncome?: number;
     subcategoryExpense?: number;
     subcategoryNet?: number;
+    categoryStatus?: 'active' | 'inactive';
+    subcategoryStatus?: 'active' | 'inactive';
   };
 };
 

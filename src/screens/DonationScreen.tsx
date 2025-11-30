@@ -398,6 +398,8 @@ export const DonationScreen = () => {
       subcategoryIncome: subcategory.totalIncome || 0,
       subcategoryExpense: subcategory.totalExpense || 0,
       subcategoryNet: subcategory.netAmount || 0,
+      categoryStatus: category.status || 'active',
+      subcategoryStatus: subcategory.status || 'active',
     });
   };
 
@@ -579,9 +581,7 @@ export const DonationScreen = () => {
             <Text style={styles.subcategoryTitle}>Subcategories</Text>
             <View style={styles.subcategoryCardGrid}>
               {item.subcategories.map((sub) => {
-                const isSubcategoryActive = sub.status !== 'inactive';
                 const subcategoryStatus = sub.status || 'active';
-                const isDisabled = !isCategoryActive || !isSubcategoryActive;
                 
                 return (
                   <View key={sub.id} style={styles.subcategoryCard}>
@@ -603,22 +603,11 @@ export const DonationScreen = () => {
                       <Text style={styles.subcategoryCardDescription}>{sub.description}</Text>
                     ) : null}
                     <TouchableOpacity
-                      style={[styles.subcategoryButton, isDisabled && styles.subcategoryButtonDisabled]}
-                      onPress={() => {
-                        if (isDisabled) {
-                          if (!isCategoryActive) {
-                            Alert.alert('Category Inactive', 'This category is inactive. Please contact admin.');
-                          } else if (!isSubcategoryActive) {
-                            Alert.alert('Subcategory Inactive', 'Contact admin, this is inactive.');
-                          }
-                        } else {
-                          handleNavigateToSubcategory(item, sub);
-                        }
-                      }}
-                      activeOpacity={isDisabled ? 1 : 0.85}
-                      disabled={isDisabled}>
-                      <Icon name="heart" size={14} color={isDisabled ? colors.textMuted : '#fff'} />
-                      <Text style={[styles.subcategoryButtonText, isDisabled && styles.subcategoryButtonTextDisabled]}>
+                      style={styles.subcategoryButton}
+                      onPress={() => handleNavigateToSubcategory(item, sub)}
+                      activeOpacity={0.85}>
+                      <Icon name="heart" size={14} color="#fff" />
+                      <Text style={styles.subcategoryButtonText}>
                         Donate now
                       </Text>
                     </TouchableOpacity>
