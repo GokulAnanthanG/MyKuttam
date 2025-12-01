@@ -29,6 +29,9 @@ export type DonationManagerMapping = {
     type: string;
     amount?: number;
   };
+  paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
+  paymentImage?: string | null;
+  accountHolderName?: string | null;
   createdBy: string;
   createdAt: string;
 };
@@ -49,6 +52,9 @@ export type DonationManagersListResponse = {
 
 export type DonationManagerWithMapping = DonationManager & {
   mappedAt: string;
+  paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
+  paymentImage?: string | null;
+  accountHolderName?: string | null;
 };
 
 export type DonationManagersBySubcategoryResponse = {
@@ -89,6 +95,9 @@ export type MappingsListResponse = {
 export type CreateMappingPayload = {
   donation_manager_id: string;
   subcategory_id: string;
+  paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
+  paymentImage?: string;
+  accountHolderName?: string;
 };
 
 export type DeleteMappingPayload = {

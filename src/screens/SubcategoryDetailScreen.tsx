@@ -15,10 +15,16 @@ import {
   TextInput,
   TouchableOpacity,
   View,
+  Linking,
 } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import {
+  launchImageLibrary,
+  type ImagePickerResponse,
+  type MediaType,
+} from 'react-native-image-picker';
 import Toast from 'react-native-toast-message';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import DateTimePicker from '@react-native-community/datetimepicker';
@@ -172,6 +178,22 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const [mappingLoading, setMappingLoading] = useState(false);
   const [mappingSubmitting, setMappingSubmitting] = useState(false);
   const [subcategoryManagers, setSubcategoryManagers] = useState<DonationManagerWithMapping[]>([]);
+
+  type MappingDetails = {
+    paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
+    accountHolderName?: string;
+    paymentImage?: string; // base64 or URL / data URI
+    paymentImagePreviewUri?: string;
+  };
+
+  const [mappingDetails, setMappingDetails] = useState<Record<string, MappingDetails>>({});
+
+  // Donation mode (online / offline) & offline payment details states
+  const [donationModeModalVisible, setDonationModeModalVisible] = useState(false);
+  const [offlineInfoModalVisible, setOfflineInfoModalVisible] = useState(false);
+  const [paymentDetailsModalVisible, setPaymentDetailsModalVisible] = useState(false);
+  const [selectedPaymentManager, setSelectedPaymentManager] =
+    useState<DonationManagerWithMapping | null>(null);
 
   // Edit subcategory states
   const [editSubcategoryModalVisible, setEditSubcategoryModalVisible] = useState(false);
@@ -395,8 +417,21 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       );
       console.log('Subcategory managers response:', response);
       if (response.success && response.data) {
-        console.log('Setting subcategory managers:', response.data.donation_managers);
-        setSubcategoryManagers(response.data.donation_managers || []);
+        const managersWithMapping = response.data.donation_managers || [];
+        console.log('Setting subcategory managers:', managersWithMapping);
+        setSubcategoryManagers(managersWithMapping);
+
+        // Initialize mapping details from server data (if available)
+        const initialDetails: Record<string, MappingDetails> = {};
+        managersWithMapping.forEach((manager) => {
+          initialDetails[manager.id] = {
+            paymentMethod: manager.paymentMethod,
+            accountHolderName: manager.accountHolderName || undefined,
+            paymentImage: manager.paymentImage || undefined,
+            paymentImagePreviewUri: manager.paymentImage || undefined,
+          };
+        });
+        setMappingDetails(initialDetails);
       } else {
         console.warn('API returned success=false:', response.message);
         setSubcategoryManagers([]);
@@ -659,6 +694,71 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     });
   };
 
+  const handleSelectPaymentMethodForManager = (
+    managerId: string,
+    method: 'UPI' | 'BANK_ACCOUNT',
+  ) => {
+    setMappingDetails((prev) => ({
+      ...prev,
+      [managerId]: {
+        ...(prev[managerId] || {}),
+        paymentMethod: method,
+      },
+    }));
+  };
+
+  const handleChangeAccountHolderName = (managerId: string, value: string) => {
+    setMappingDetails((prev) => ({
+      ...prev,
+      [managerId]: {
+        ...(prev[managerId] || {}),
+        accountHolderName: value,
+      },
+    }));
+  };
+
+  const handleSelectPaymentImage = (managerId: string) => {
+    const options = {
+      mediaType: 'photo' as MediaType,
+      quality: 0.8 as const,
+      maxWidth: 800,
+      maxHeight: 800,
+      includeBase64: true,
+    };
+
+    launchImageLibrary(options, (response: ImagePickerResponse) => {
+      if (response.didCancel) {
+        return;
+      }
+      if (response.errorMessage) {
+        Alert.alert('Error', response.errorMessage);
+        return;
+      }
+      if (response.assets && response.assets[0]) {
+        const asset = response.assets[0];
+        const base64 = asset.base64;
+        const uri = asset.uri || '';
+        if (!base64) {
+          Toast.show({
+            type: 'error',
+            text1: 'Image error',
+            text2: 'Unable to read selected image. Please try another image.',
+          });
+          return;
+        }
+
+        setMappingDetails((prev) => ({
+          ...prev,
+          [managerId]: {
+            ...(prev[managerId] || {}),
+            paymentImage: base64,
+            paymentImagePreviewUri: uri || `data:${asset.type || 'image/jpeg'};base64,${base64}`,
+          },
+        }));
+      }
+    });
+  };
+
   const handleSaveMappings = async () => {
     setMappingSubmitting(true);
     try {
@@ -668,12 +768,16 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       const toRemove = Array.from(currentMappings).filter((id) => !selectedManagers.has(id));
 
       // Create new mappings
-      const addPromises = toAdd.map((managerId) =>
-        DonationManagerMappingService.createMapping({
+      const addPromises = toAdd.map((managerId) => {
+        const details = mappingDetails[managerId] || {};
+        return DonationManagerMappingService.createMapping({
           donation_manager_id: managerId,
           subcategory_id: subcategoryId,
-        }),
-      );
+          paymentMethod: details.paymentMethod,
+          paymentImage: details.paymentImage,
+          accountHolderName: details.accountHolderName,
+        });
+      });
 
       // Delete removed mappings
       const removePromises = toRemove.map((managerId) =>
@@ -718,7 +822,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       });
       return;
     }
-    
+
     if (subcategoryStatus === 'inactive') {
       Toast.show({
         type: 'error',
@@ -728,6 +832,11 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       return;
     }
 
+    // Show mode selection (online / offline)
+    setDonationModeModalVisible(true);
+  };
+
+  const startOnlineDonationFlow = () => {
     if (subcategoryType === 'specific_amount') {
       // Direct payment for specific amount
       if (!subcategoryAmount || subcategoryAmount <= 0) {
@@ -750,6 +859,30 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         text2: 'Unable to process donation for this subcategory.',
       });
     }
+  };
+
+  const handleSelectOnlineDonation = () => {
+    setDonationModeModalVisible(false);
+    startOnlineDonationFlow();
+  };
+
+  const handleSelectOfflineDonation = () => {
+    setDonationModeModalVisible(false);
+
+    const hasManagers =
+      (subcategoryManagers && subcategoryManagers.length > 0) ||
+      (managers && managers.length > 0);
+
+    if (!hasManagers) {
+      Toast.show({
+        type: 'error',
+        text1: 'No managers assigned',
+        text2: 'Offline donation is not available as no donation managers are mapped.',
+      });
+      return;
+    }
+
+    setOfflineInfoModalVisible(true);
   };
 
   const handleConfirmPaymentAmount = () => {
@@ -778,9 +911,15 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
     setPaymentProcessing(true);
     try {
-      const description = `Donation for ${subcategoryTitle}${subcategoryDescription ? ` - ${subcategoryDescription}` : ''}`;
+      const description = `Donation for ${subcategoryTitle}${
+        subcategoryDescription ? ` - ${subcategoryDescription}` : ''
+      }`;
+
+      // Add 2% extra only for the Razorpay charge, keep original amount for donation record
+      const amountWithFee = amount * 1.02;
+
       const options = createRazorpayOptions(
-        amount,
+        amountWithFee,
         description,
         currentUser.name,
         currentUser.phone,
@@ -837,6 +976,33 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         text2: error instanceof Error ? error.message : 'Please contact support.',
       });
     }
+  };
+
+  const handleOpenPaymentDetails = (manager: DonationManagerWithMapping) => {
+    setSelectedPaymentManager(manager);
+    setPaymentDetailsModalVisible(true);
+  };
+
+  const handleOpenWhatsAppChat = (phone?: string) => {
+    if (!phone) {
+      Toast.show({
+        type: 'error',
+        text1: 'Phone number missing',
+        text2: 'Manager phone number is not available.',
+      });
+      return;
+    }
+
+    const cleanedPhone = phone.replace(/[^\d]/g, '');
+    const url = `https://wa.me/${cleanedPhone}`;
+
+    Linking.openURL(url).catch(() => {
+      Toast.show({
+        type: 'error',
+        text1: 'Unable to open WhatsApp',
+        text2: 'Please make sure WhatsApp is installed on your device.',
+      });
+    });
   };
 
   const handleViewDonorDonations = (donation: DonationRecord) => {
@@ -1834,6 +2000,241 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           <Text style={styles.metaText}>Managers: Not assigned</Text>
         )}
       </View>
+
+      {/* Donate mode selection (online / offline) */}
+      <Modal
+        visible={donationModeModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setDonationModeModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Choose donation method</Text>
+              <TouchableOpacity onPress={() => setDonationModeModalVisible(false)}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.metaText}>
+              Select how you would like to donate for this subcategory.
+            </Text>
+            <View style={{ marginTop: 16, gap: 12 }}>
+              <TouchableOpacity
+                style={styles.primaryOptionButton}
+                onPress={handleSelectOnlineDonation}
+                activeOpacity={0.9}>
+                <Icon name="credit-card" size={16} color="#fff" />
+                <Text style={styles.primaryOptionButtonText}>Online payment</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryOptionButton}
+                onPress={handleSelectOfflineDonation}
+                activeOpacity={0.9}>
+                <Icon name="bank" size={16} color={colors.primary} />
+                <Text style={styles.secondaryOptionButtonText}>Offline (bank / UPI)</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Offline donation info modal */}
+      <Modal
+        visible={offlineInfoModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setOfflineInfoModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Offline donation</Text>
+              <TouchableOpacity onPress={() => setOfflineInfoModalVisible(false)}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.metaText}>
+              Contact any of the below managers for offline donation via UPI or bank account.
+            </Text>
+            <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+              {(subcategoryManagers.length > 0 ? subcategoryManagers : managers || []).map(
+                (manager) => {
+                  const managerWithMapping = manager as DonationManagerWithMapping;
+                  const details = mappingDetails[managerWithMapping.id] || {};
+                  return (
+                    <View key={managerWithMapping.id} style={styles.offlineManagerCard}>
+                      <Text style={styles.managerName}>{managerWithMapping.name}</Text>
+                      {managerWithMapping.phone ? (
+                        <Text style={styles.managerPhone}>{managerWithMapping.phone}</Text>
+                      ) : null}
+                      {details.paymentMethod ? (
+                        <Text style={styles.metaText}>
+                          Payment method: {details.paymentMethod === 'UPI' ? 'UPI' : 'Bank account'}
+                        </Text>
+                      ) : null}
+                      {details.accountHolderName ? (
+                        <Text style={styles.metaText}>
+                          Account holder: {details.accountHolderName}
+                        </Text>
+                      ) : null}
+                      <View style={{ marginTop: 8, flexDirection: 'row', gap: 8 }}>
+                        <TouchableOpacity
+                          style={styles.outlineButton}
+                          onPress={() => handleOpenPaymentDetails(managerWithMapping)}
+                          activeOpacity={0.9}>
+                          <Icon name="image" size={14} color={colors.primary} />
+                          <Text style={styles.outlineButtonText}>Show payment details</Text>
+                        </TouchableOpacity>
+                        {managerWithMapping.phone ? (
+                          <TouchableOpacity
+                            style={styles.outlineButton}
+                            onPress={() => handleOpenWhatsAppChat(managerWithMapping.phone)}
+                            activeOpacity={0.9}>
+                            <Icon name="whatsapp" size={14} color={colors.primary} />
+                            <Text style={styles.outlineButtonText}>Message on WhatsApp</Text>
+                          </TouchableOpacity>
+                        ) : null}
+                      </View>
+                    </View>
+                  );
+                },
+              )}
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payment image / instructions modal */}
+      <Modal
+        visible={paymentDetailsModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPaymentDetailsModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView
+            style={styles.modalKeyboardAvoid}
+            behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+            <View style={styles.modalContainer}>
+              <View style={styles.modalHeaderRow}>
+                <Text style={styles.modalTitle}>Payment details</Text>
+                <TouchableOpacity onPress={() => setPaymentDetailsModalVisible(false)}>
+                  <Icon name="close" size={18} color={colors.text} />
+                </TouchableOpacity>
+              </View>
+              {selectedPaymentManager ? (
+                <>
+                  <Text style={styles.managerName}>{selectedPaymentManager.name}</Text>
+                  {selectedPaymentManager.phone ? (
+                    <Text style={styles.managerPhone}>{selectedPaymentManager.phone}</Text>
+                  ) : null}
+                  <View style={{ marginVertical: 12 }}>
+                    <Text style={styles.metaText}>
+                      {(() => {
+                        const details =
+                          mappingDetails[selectedPaymentManager.id] ||
+                          ({
+                            paymentMethod: selectedPaymentManager.paymentMethod,
+                            accountHolderName: selectedPaymentManager.accountHolderName || undefined,
+                          } as any);
+                        if (details.paymentMethod === 'UPI') {
+                          return 'Scan the UPI QR code, complete the payment, take the successful payment screenshot and send it to the respective manager\'s WhatsApp number and inform your details.';
+                        }
+                        if (details.paymentMethod === 'BANK_ACCOUNT') {
+                          return 'Use the below bank details / image to transfer the amount, then send the successful payment screenshot to the respective manager\'s WhatsApp number along with your details.';
+                        }
+                        return 'Use the payment details below to complete your offline donation and share the payment proof with the manager on WhatsApp along with your details.';
+                      })()}
+                    </Text>
+                  </View>
+                  <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                    {(() => {
+                      const details =
+                        mappingDetails[selectedPaymentManager.id] ||
+                        ({
+                          paymentImage: selectedPaymentManager.paymentImage || undefined,
+                        } as any);
+                      const imageSource = details.paymentImage
+                        ? { uri: details.paymentImage.startsWith('http') || details.paymentImage.startsWith('data:')
+                          ? details.paymentImage
+                          : `data:image/jpeg;base64,${details.paymentImage}` }
+                        : null;
+                      if (!imageSource) {
+                        return (
+                          <Text style={styles.metaText}>
+                            Payment image is not available. Please contact the manager directly for
+                            payment details.
+                          </Text>
+                        );
+                      }
+                      return (
+                        <TouchableOpacity
+                          activeOpacity={0.9}
+                          onPress={() => {
+                            // Reuse avatar modal styles for full-screen preview
+                            setSelectedDonor((prev) => ({
+                              ...(prev || { name: selectedPaymentManager.name }),
+                              avatar: imageSource.uri,
+                            }) as any);
+                            setDonorAvatarModalVisible(true);
+                          }}>
+                          <Image
+                            source={imageSource}
+                            style={styles.paymentImage}
+                            resizeMode="contain"
+                          />
+                        </TouchableOpacity>
+                      );
+                    })()}
+                  </ScrollView>
+                  <View style={{ marginTop: 16, gap: 10 }}>
+                    <TouchableOpacity
+                      style={styles.primaryOptionButton}
+                      onPress={() => handleOpenWhatsAppChat(selectedPaymentManager.phone)}
+                      activeOpacity={0.9}>
+                      <Icon name="whatsapp" size={16} color="#fff" />
+                      <Text style={styles.primaryOptionButtonText}>Open WhatsApp chat</Text>
+                    </TouchableOpacity>
+                    {(() => {
+                      const details =
+                        mappingDetails[selectedPaymentManager.id] ||
+                        ({
+                          paymentImage: selectedPaymentManager.paymentImage || undefined,
+                        } as any);
+                      if (!details.paymentImage) {
+                        return null;
+                      }
+                      const uri =
+                        details.paymentImage.startsWith('http') ||
+                        details.paymentImage.startsWith('file://')
+                          ? details.paymentImage
+                          : `data:image/jpeg;base64,${details.paymentImage}`;
+                      return (
+                        <TouchableOpacity
+                          style={styles.secondaryOptionButton}
+                          activeOpacity={0.9}
+                          onPress={() => {
+                            // Best-effort: open image URI so user can use OS share/save options
+                            Linking.openURL(uri).catch(() => {
+                              Toast.show({
+                                type: 'error',
+                                text1: 'Unable to open image',
+                                text2: 'Please try taking a screenshot to save the payment details.',
+                              });
+                            });
+                          }}>
+                          <Icon name="download" size={16} color={colors.primary} />
+                          <Text style={styles.secondaryOptionButtonText}>Download / open image</Text>
+                        </TouchableOpacity>
+                      );
+                    })()}
+                  </View>
+                </>
+              ) : (
+                <Text style={styles.metaText}>Payment details not available.</Text>
+              )}
+            </View>
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
 
       <View style={styles.tabRow}>
         <TouchableOpacity
@@ -3434,34 +3835,115 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                 ) : (
                   donationManagers.map((manager) => {
                     const isSelected = selectedManagers.has(manager.id);
+                    const details = mappingDetails[manager.id] || {};
                     return (
                       <TouchableOpacity
                         key={manager.id}
                         style={styles.managerItem}
                         onPress={() => handleToggleManagerSelection(manager.id)}
-                        activeOpacity={0.7}>
-                        <View style={styles.managerItemLeft}>
-                          <View
-                            style={[
-                              styles.checkbox,
-                              isSelected && styles.checkboxChecked,
-                            ]}>
-                            {isSelected && <Icon name="check" size={12} color="#fff" />}
+                        activeOpacity={0.8}>
+                        <View style={styles.managerItemHeader}>
+                          <View style={styles.managerItemLeft}>
+                            <View
+                              style={[
+                                styles.checkbox,
+                                isSelected && styles.checkboxChecked,
+                              ]}>
+                              {isSelected && <Icon name="check" size={12} color="#fff" />}
+                            </View>
+                            <View style={styles.managerInfo}>
+                              <Text style={styles.managerName}>{manager.name}</Text>
+                              <Text style={styles.managerPhone}>{manager.phone}</Text>
+                            </View>
                           </View>
-                          <View style={styles.managerInfo}>
-                            <Text style={styles.managerName}>{manager.name}</Text>
-                            <Text style={styles.managerPhone}>{manager.phone}</Text>
-                          </View>
+                          {manager.status === 'ACTIVE' ? (
+                            <View style={styles.statusBadgeActive}>
+                              <Text style={styles.statusBadgeTextSmall}>ACTIVE</Text>
+                            </View>
+                          ) : (
+                            <View style={styles.statusBadgeInactive}>
+                              <Text style={styles.statusBadgeTextSmall}>
+                                {manager.status}
+                              </Text>
+                            </View>
+                          )}
                         </View>
-                        {manager.status === 'ACTIVE' ? (
-                          <View style={styles.statusBadgeActive}>
-                            <Text style={styles.statusBadgeTextSmall}>ACTIVE</Text>
-                          </View>
-                        ) : (
-                          <View style={styles.statusBadgeInactive}>
-                            <Text style={styles.statusBadgeTextSmall}>
-                              {manager.status}
+                        {isSelected && (
+                          <View style={styles.mappingDetailsContainer}>
+                            <Text style={styles.metaText}>Payment method</Text>
+                            <View style={styles.paymentMethodRow}>
+                              <TouchableOpacity
+                                style={[
+                                  styles.chipButton,
+                                  details.paymentMethod === 'UPI' && styles.chipButtonActive,
+                                ]}
+                                onPress={() =>
+                                  handleSelectPaymentMethodForManager(manager.id, 'UPI')
+                                }
+                                activeOpacity={0.8}>
+                                <Text
+                                  style={[
+                                    styles.chipButtonText,
+                                    details.paymentMethod === 'UPI' &&
+                                      styles.chipButtonTextActive,
+                                  ]}>
+                                  UPI
+                                </Text>
+                              </TouchableOpacity>
+                              <TouchableOpacity
+                                style={[
+                                  styles.chipButton,
+                                  details.paymentMethod === 'BANK_ACCOUNT' &&
+                                    styles.chipButtonActive,
+                                ]}
+                                onPress={() =>
+                                  handleSelectPaymentMethodForManager(
+                                    manager.id,
+                                    'BANK_ACCOUNT',
+                                  )
+                                }
+                                activeOpacity={0.8}>
+                                <Text
+                                  style={[
+                                    styles.chipButtonText,
+                                    details.paymentMethod === 'BANK_ACCOUNT' &&
+                                      styles.chipButtonTextActive,
+                                  ]}>
+                                  Bank account
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                            <Text style={[styles.metaText, { marginTop: 8 }]}>
+                              Account holder name (optional)
                             </Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="Enter account holder name"
+                              placeholderTextColor={colors.textMuted}
+                              value={details.accountHolderName || ''}
+                              onChangeText={(text) =>
+                                handleChangeAccountHolderName(manager.id, text)
+                              }
+                            />
+                            <Text style={[styles.metaText, { marginTop: 8 }]}>
+                              Payment image (UPI QR / bank details)
+                            </Text>
+                            <View style={styles.paymentImageRow}>
+                              <TouchableOpacity
+                                style={styles.outlineButton}
+                                onPress={() => handleSelectPaymentImage(manager.id)}
+                                activeOpacity={0.9}>
+                                <Icon name="image" size={14} color={colors.primary} />
+                                <Text style={styles.outlineButtonText}>Select image</Text>
+                              </TouchableOpacity>
+                              {details.paymentImagePreviewUri ? (
+                                <Image
+                                  source={{ uri: details.paymentImagePreviewUri }}
+                                  style={styles.paymentImagePreview}
+                                  resizeMode="cover"
+                                />
+                              ) : null}
+                            </View>
                           </View>
                         )}
                       </TouchableOpacity>
@@ -3632,6 +4114,13 @@ const styles = StyleSheet.create({
     gap: 6,
     marginTop: 2,
   },
+  offlineManagerCard: {
+    marginTop: 12,
+    padding: 10,
+    borderRadius: 8,
+    backgroundColor: colors.card,
+    gap: 4,
+  },
   managerText: {
     fontFamily: fonts.body,
     fontSize: 10,
@@ -3746,6 +4235,52 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.textMuted,
   },
+  primaryOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  primaryOptionButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+  },
+  secondaryOptionButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.primary,
+    backgroundColor: colors.card,
+  },
+  secondaryOptionButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.primary,
+  },
+  outlineButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: colors.primary,
+  },
+  outlineButtonText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.primary,
+  },
   moreButton: {
     paddingLeft: 4,
   },
@@ -3849,6 +4384,10 @@ const styles = StyleSheet.create({
     paddingBottom: 24,
     maxHeight: '90%',
   },
+  modalKeyboardAvoid: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
   modalHeaderRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -3929,6 +4468,56 @@ const styles = StyleSheet.create({
   },
   chipTextActive: {
     color: '#fff',
+  },
+  mappingDetailsContainer: {
+    marginTop: 8,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    borderTopColor: colors.border,
+    paddingTop: 8,
+    gap: 4,
+  },
+  paymentMethodRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 4,
+  },
+  chipButton: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  chipButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: '#E5F2FF',
+  },
+  chipButtonText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.text,
+  },
+  chipButtonTextActive: {
+    color: colors.primary,
+  },
+  paymentImageRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+  },
+  paymentImagePreview: {
+    width: 40,
+    height: 40,
+    borderRadius: 4,
+  },
+  paymentImage: {
+    width: '100%',
+    height: 260,
+    borderRadius: 8,
+    backgroundColor: '#000',
+    marginTop: 8,
   },
   submitButton: {
     height: 48,
@@ -4125,14 +4714,15 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   managerItem: {
+    marginBottom: 10,
+    padding: 12,
+    borderRadius: 12,
+    backgroundColor: colors.cardMuted,
+  },
+  managerItemHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingVertical: 12,
-    paddingHorizontal: 12,
-    borderRadius: 8,
-    backgroundColor: colors.cardMuted,
-    marginBottom: 8,
   },
   managerItemLeft: {
     flexDirection: 'row',
