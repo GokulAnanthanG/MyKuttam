@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -14,6 +14,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import {
   launchImageLibrary,
   type ImagePickerResponse,
@@ -47,11 +48,75 @@ export const GalleryScreen = () => {
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [uploadDescription, setUploadDescription] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const isFetchingRef = useRef(false);
+  const hasShownOfflineToastRef = useRef(false);
 
   const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN';
 
   const fetchImages = useCallback(
     async (pageNum: number = 1, append: boolean = false) => {
+      // Prevent multiple simultaneous calls
+      if (isFetchingRef.current) {
+        console.log('Gallery: Already fetching, skipping duplicate call');
+        return;
+      }
+
+      // Check network status before making API call
+      const netInfo = await NetInfo.fetch();
+      const isConnected = netInfo.isConnected ?? false;
+      setIsOnline(isConnected);
+
+      if (!isConnected) {
+        console.log('Gallery: Offline, loading from cache');
+        // Load from Realm cache when offline
+        try {
+          const storedImages = await getStoredGalleryImages();
+          if (storedImages.length > 0) {
+            setImages(storedImages);
+            if (!hasShownOfflineToastRef.current) {
+              Toast.show({
+                type: 'error',
+                text1: 'Offline Mode',
+                text2: 'Showing cached images. Please check your connection.',
+                visibilityTime: 3000,
+              });
+              hasShownOfflineToastRef.current = true;
+            }
+          } else {
+            if (pageNum === 1) {
+              setImages([]);
+            }
+            if (!hasShownOfflineToastRef.current) {
+              Toast.show({
+                type: 'error',
+                text1: 'Offline',
+                text2: 'No cached images available. Please check your connection.',
+                visibilityTime: 3000,
+              });
+              hasShownOfflineToastRef.current = true;
+            }
+          }
+        } catch (realmError) {
+          console.error('Error loading from Realm:', realmError);
+          if (pageNum === 1) {
+            setImages([]);
+          }
+        } finally {
+          if (pageNum === 1) {
+            setLoading(false);
+          }
+          setLoadingMore(false);
+          setRefreshing(false);
+        }
+        return; // Exit early when offline
+      }
+
+      // Reset offline toast flag when online
+      hasShownOfflineToastRef.current = false;
+
+      isFetchingRef.current = true;
+
       try {
         if (pageNum === 1) {
           setLoading(true);
@@ -88,31 +153,65 @@ export const GalleryScreen = () => {
         setHasMore(pageNum < (response?.data?.pagination?.totalPages || 0));
         setPage(pageNum);
       } catch (error) {
-        // Try to load from Realm on error
-        try {
-          const storedImages = await getStoredGalleryImages();
-          if (storedImages.length > 0) {
-            setImages(storedImages);
-            Toast.show({
-              type: 'error',
-              text1: 'Offline Mode',
-              text2: 'Showing cached images. Please check your connection.',
-              visibilityTime: 3000,
-            });
-          } else {
+        console.error('Gallery fetch error:', error);
+        
+        // Check if error is due to network
+        const isNetworkError = 
+          error instanceof Error && (
+            error.message.includes('Network') ||
+            error.message.includes('fetch') ||
+            error.message.includes('timeout') ||
+            error.message.includes('Failed to fetch')
+          );
+
+        // Try to load from Realm on network error
+        if (isNetworkError) {
+          try {
+            const storedImages = await getStoredGalleryImages();
+            if (storedImages.length > 0) {
+              setImages(storedImages);
+              if (!hasShownOfflineToastRef.current) {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Offline Mode',
+                  text2: 'Showing cached images. Please check your connection.',
+                  visibilityTime: 3000,
+                });
+                hasShownOfflineToastRef.current = true;
+              }
+            } else {
+              // No cached images, ensure empty state
+              if (pageNum === 1) {
+                setImages([]);
+              }
+              if (!hasShownOfflineToastRef.current) {
+                Toast.show({
+                  type: 'error',
+                  text1: 'Network Error',
+                  text2: 'Unable to load gallery. Please check your connection.',
+                  visibilityTime: 3000,
+                });
+                hasShownOfflineToastRef.current = true;
+              }
+            }
+          } catch (realmError) {
+            console.error('Error loading from Realm:', realmError);
             // No cached images, ensure empty state
             if (pageNum === 1) {
               setImages([]);
             }
-            Toast.show({
-              type: 'error',
-              text1: 'Error',
-              text2: error instanceof Error ? error.message : 'Failed to load gallery',
-              visibilityTime: 3000,
-            });
+            if (!hasShownOfflineToastRef.current) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: 'Failed to load gallery',
+                visibilityTime: 3000,
+              });
+              hasShownOfflineToastRef.current = true;
+            }
           }
-        } catch (realmError) {
-          // No cached images, ensure empty state
+        } else {
+          // Non-network error, show error message
           if (pageNum === 1) {
             setImages([]);
           }
@@ -124,7 +223,8 @@ export const GalleryScreen = () => {
           });
         }
       } finally {
-        // Always stop loading states
+        // Always stop loading states and reset fetching flag
+        isFetchingRef.current = false;
         if (pageNum === 1) {
           setLoading(false);
         }
@@ -135,28 +235,88 @@ export const GalleryScreen = () => {
     [isAdmin, status],
   );
 
+  // Monitor network status
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const isConnected = state.isConnected ?? false;
+      setIsOnline(isConnected);
+      
+      // Reset offline toast flag when coming back online
+      if (isConnected) {
+        hasShownOfflineToastRef.current = false;
+      }
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
   useEffect(() => {
     // Reset when status changes and fetch new images
     setPage(1);
     setHasMore(true);
     setImages([]);
+    hasShownOfflineToastRef.current = false; // Reset toast flag on status change
     fetchImages(1, false);
-  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [status, fetchImages]);
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    // Check network before refresh
+    const netInfo = await NetInfo.fetch();
+    const isConnected = netInfo.isConnected ?? false;
+    
+    if (!isConnected) {
+      // Just load from cache when offline
+      try {
+        const storedImages = await getStoredGalleryImages();
+        setImages(storedImages);
+        Toast.show({
+          type: 'error',
+          text1: 'Offline',
+          text2: 'Showing cached images. Please check your connection.',
+          visibilityTime: 2000,
+        });
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: 'Offline',
+          text2: 'No cached images available.',
+          visibilityTime: 2000,
+        });
+      }
+      setRefreshing(false);
+      return;
+    }
+
     setRefreshing(true);
     setPage(1);
     setHasMore(true);
+    hasShownOfflineToastRef.current = false; // Reset toast flag on refresh
     fetchImages(1, false);
   };
 
-  const handleLoadMore = () => {
-    if (!loadingMore && hasMore) {
-      fetchImages(page + 1, true);
+  const handleLoadMore = async () => {
+    // Don't load more when offline or already fetching
+    if (!isOnline || isFetchingRef.current || loadingMore || !hasMore) {
+      return;
     }
+    fetchImages(page + 1, true);
   };
 
   const handleApprove = async (imageId: string) => {
+    // Check network before showing alert
+    const netInfo = await NetInfo.fetch();
+    if (!netInfo.isConnected) {
+      Toast.show({
+        type: 'error',
+        text1: 'Offline',
+        text2: 'Cannot approve image while offline. Please check your connection.',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
     Alert.alert(
       'Approve Image',
       'Are you sure you want to approve this image?',
@@ -179,8 +339,10 @@ export const GalleryScreen = () => {
               });
               // Remove from review list and refresh
               setImages((prev) => prev.filter((img) => img.id !== imageId));
-              // Refresh to update pagination
-              fetchImages(1, false);
+              // Refresh to update pagination (only if online)
+              if (isOnline) {
+                fetchImages(1, false);
+              }
             } catch (error) {
               Toast.show({
                 type: 'error',
@@ -197,6 +359,18 @@ export const GalleryScreen = () => {
   };
 
   const handleDelete = async (imageId: string) => {
+    // Check network before showing alert
+    const netInfo = await NetInfo.fetch();
+    if (!netInfo.isConnected) {
+      Toast.show({
+        type: 'error',
+        text1: 'Offline',
+        text2: 'Cannot delete image while offline. Please check your connection.',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
     Alert.alert(
       'Delete Image',
       'Are you sure you want to delete this image? This action cannot be undone.',
@@ -219,8 +393,10 @@ export const GalleryScreen = () => {
               });
               // Remove from local state
               setImages((prev) => prev.filter((img) => img.id !== imageId));
-              // Refresh to update pagination
-              fetchImages(1, false);
+              // Refresh to update pagination (only if online)
+              if (isOnline) {
+                fetchImages(1, false);
+              }
             } catch (error) {
               Toast.show({
                 type: 'error',
@@ -275,6 +451,18 @@ export const GalleryScreen = () => {
   const handleUpload = async () => {
     if (!selectedImageUri) return;
 
+    // Check network before upload
+    const netInfo = await NetInfo.fetch();
+    if (!netInfo.isConnected) {
+      Toast.show({
+        type: 'error',
+        text1: 'Offline',
+        text2: 'Cannot upload image while offline. Please check your connection.',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
     setShowConfirmModal(false);
     setShowUploadModal(false);
     setUploading(true);
@@ -290,8 +478,8 @@ export const GalleryScreen = () => {
       // Reset form
       setSelectedImageUri(null);
       setUploadDescription('');
-      // Refresh images only if viewing review status (for admin)
-      if (isAdmin && status === 'review') {
+      // Refresh images only if viewing review status (for admin) and online
+      if (isAdmin && status === 'review' && isOnline) {
         fetchImages(1, false);
       }
     } catch (error) {

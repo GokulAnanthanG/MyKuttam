@@ -18,6 +18,7 @@ import {
   TouchableOpacity,
   View,
 } from 'react-native';
+import NetInfo from '@react-native-community/netinfo';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import RBSheet from 'react-native-raw-bottom-sheet';
 import Video from 'react-native-video';
@@ -41,6 +42,10 @@ import {
   type MediaType,
 } from '../services/news';
 import { BASE_URL } from '../config/api';
+import {
+  saveNewsImagesToRealm,
+  getStoredNewsImages,
+} from '../storage/newsRealm';
 
 const formatTimeAgo = (dateString: string): string => {
   const date = new Date(dateString);
@@ -97,6 +102,7 @@ export const NewsScreen = () => {
   const [hasMore, setHasMore] = useState(true);
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [isOnline, setIsOnline] = useState(true);
   
   // Comments bottom sheet
   const bottomSheetRef = useRef<any>(null);
@@ -364,6 +370,27 @@ export const NewsScreen = () => {
     } catch (error) {
       console.error('Error fetching highlighted news:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to load highlighted news';
+      
+      // If offline, try to load from Realm
+      const netInfo = await NetInfo.fetch();
+      if (!netInfo.isConnected) {
+        try {
+          const storedNews = await getStoredNewsImages();
+          if (storedNews.length > 0) {
+            setHighlightedNews(storedNews);
+            Toast.show({
+              type: 'error',
+              text1: 'Offline Mode',
+              text2: 'Showing cached news images. Please check your connection.',
+              visibilityTime: 3000,
+            });
+            return;
+          }
+        } catch (realmError) {
+          console.error('Error loading from Realm:', realmError);
+        }
+      }
+      
       Toast.show({
         type: 'error',
         text1: 'Error fetching news',
@@ -372,10 +399,51 @@ export const NewsScreen = () => {
       });
       setHighlightedNews([]);
     }
-  }, [currentUser, checkLikeStatuses]);
+  }, [currentUser, checkLikeStatuses, isOnline]);
 
   const fetchFeaturedNews = useCallback(
     async (pageNum: number = 1, append: boolean = false) => {
+      // Check network status
+      const netInfo = await NetInfo.fetch();
+      const isConnected = netInfo.isConnected ?? false;
+      setIsOnline(isConnected);
+
+      // If offline and first page, try to load from Realm
+      if (!isConnected && pageNum === 1 && !append) {
+        try {
+          const storedNews = await getStoredNewsImages();
+          if (storedNews.length > 0) {
+            setFeaturedNews(storedNews);
+            Toast.show({
+              type: 'error',
+              text1: 'Offline Mode',
+              text2: 'Showing cached news images. Please check your connection.',
+              visibilityTime: 3000,
+            });
+            setLoading(false);
+            setRefreshing(false);
+            setHasMore(false);
+            return;
+          }
+        } catch (realmError) {
+          console.error('Error loading from Realm:', realmError);
+        }
+      }
+
+      // If offline, don't make API calls
+      if (!isConnected) {
+        if (pageNum === 1) {
+          setLoading(false);
+        }
+        setLoadingMore(false);
+        setRefreshing(false);
+        if (!append) {
+          setFeaturedNews([]);
+        }
+        setHasMore(false);
+        return;
+      }
+
       try {
         if (pageNum === 1) {
           setLoading(true);
@@ -439,12 +507,35 @@ export const NewsScreen = () => {
         console.error('Error fetching featured news:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to load news';
         
+        // If network error and first page, try to load from Realm
+        const isNetworkError = errorMessage.includes('Network') || errorMessage.includes('fetch');
+        if (isNetworkError && pageNum === 1 && !append) {
+          try {
+            const storedNews = await getStoredNewsImages();
+            if (storedNews.length > 0) {
+              setFeaturedNews(storedNews);
+              Toast.show({
+                type: 'error',
+                text1: 'Offline Mode',
+                text2: 'Showing cached news images. Please check your connection.',
+                visibilityTime: 3000,
+              });
+              setLoading(false);
+              setRefreshing(false);
+              setHasMore(false);
+              return;
+            }
+          } catch (realmError) {
+            console.error('Error loading from Realm:', realmError);
+          }
+        }
+        
         // Only show error toast on first page load, not on pagination
         if (pageNum === 1) {
           Toast.show({
             type: 'error',
             text1: 'Error fetching news',
-            text2: errorMessage.includes('Network') || errorMessage.includes('fetch') 
+            text2: isNetworkError
               ? 'Network error. Please check your connection.' 
               : errorMessage,
             visibilityTime: 3000,
@@ -466,6 +557,41 @@ export const NewsScreen = () => {
     [currentUser, checkLikeStatuses],
   );
 
+  // Monitor network status
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener((state) => {
+      const isConnected = state.isConnected ?? false;
+      setIsOnline(isConnected);
+    });
+
+    return () => {
+      unsubscribe();
+    };
+  }, []);
+
+  // Store news images to Realm when news data changes
+  useEffect(() => {
+    const storeNewsImages = async () => {
+      if (!isOnline) return; // Don't store when offline
+      
+      // Combine highlighted and featured news, get first 5 with images
+      const allNews = [...highlightedNews, ...featuredNews];
+      const newsWithImages = allNews.filter(
+        (news) => news.media_type === 'IMAGE' && news.media_src
+      );
+      
+      if (newsWithImages.length > 0) {
+        // Store first 5 news items with images
+        await saveNewsImagesToRealm(newsWithImages.slice(0, 5));
+      }
+    };
+
+    // Only store if we have news data
+    if (highlightedNews.length > 0 || featuredNews.length > 0) {
+      storeNewsImages();
+    }
+  }, [highlightedNews, featuredNews, isOnline]);
+
   useEffect(() => {
     // Only fetch on mount, not when functions change
     let isMounted = true;
@@ -484,7 +610,44 @@ export const NewsScreen = () => {
     };
   }, []); // Empty dependency array - only run once on mount
 
-  const handleRefresh = () => {
+  const handleRefresh = async () => {
+    // Check network before refresh
+    const netInfo = await NetInfo.fetch();
+    const isConnected = netInfo.isConnected ?? false;
+    
+    if (!isConnected) {
+      // Just load from cache when offline
+      try {
+        const storedNews = await getStoredNewsImages();
+        if (storedNews.length > 0) {
+          setFeaturedNews(storedNews);
+          setHighlightedNews(storedNews);
+          Toast.show({
+            type: 'error',
+            text1: 'Offline',
+            text2: 'Showing cached news images. Please check your connection.',
+            visibilityTime: 2000,
+          });
+        } else {
+          Toast.show({
+            type: 'error',
+            text1: 'Offline',
+            text2: 'No cached news available.',
+            visibilityTime: 2000,
+          });
+        }
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: 'Offline',
+          text2: 'No cached news available.',
+          visibilityTime: 2000,
+        });
+      }
+      setRefreshing(false);
+      return;
+    }
+
     setRefreshing(true);
     setPage(1);
     setHasMore(true);
