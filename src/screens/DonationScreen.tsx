@@ -137,7 +137,6 @@ export const DonationScreen = () => {
       const pinnedIds = await getPinnedCategoryIds();
       setPinnedCategoryIds(pinnedIds);
     } catch (error) {
-      console.error('Error loading pinned categories:', error);
     }
   }, []);
 
@@ -159,7 +158,6 @@ export const DonationScreen = () => {
         }
         setPinnedCategoryIds(newPinnedIds);
       } catch (error) {
-        console.error('Error toggling pin:', error);
         Toast.show({
           type: 'error',
           text1: 'Error',
@@ -605,8 +603,8 @@ export const DonationScreen = () => {
                     <TouchableOpacity
                       style={styles.subcategoryButton}
                       onPress={() => handleNavigateToSubcategory(item, sub)}
-                      activeOpacity={0.85}>
-                      <Icon name="heart" size={14} color="#fff" />
+                      activeOpacity={0.8}>
+                      <Icon name="heart" size={16} color="#fff" />
                       <Text style={styles.subcategoryButtonText}>
                         Donate now
                       </Text>
@@ -1222,7 +1220,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   subcategoryCard: {
-    flexBasis: '48%',
+    width: '100%',
     padding: 12,
     borderRadius: 12,
     backgroundColor: colors.cardMuted,
@@ -1268,14 +1266,21 @@ const styles = StyleSheet.create({
     marginTop: 2,
   },
   subcategoryButton: {
-    marginTop: 4,
-    height: 36,
-    borderRadius: 10,
+    marginTop: 8,
+    width: '100%',
+    height: 44,
+    borderRadius: 12,
     backgroundColor: colors.primary,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 8,
+    gap: 10,
+    paddingHorizontal: 16,
+    shadowColor: colors.primary,
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 6,
   },
   subcategoryButtonDisabled: {
     backgroundColor: colors.border,
@@ -1283,8 +1288,10 @@ const styles = StyleSheet.create({
   },
   subcategoryButtonText: {
     fontFamily: fonts.heading,
-    fontSize: 13,
+    fontSize: 15,
+    fontWeight: '600',
     color: '#fff',
+    letterSpacing: 0.5,
   },
   subcategoryButtonTextDisabled: {
     color: colors.textMuted,

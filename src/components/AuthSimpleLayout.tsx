@@ -39,7 +39,7 @@ export const AuthSimpleLayout = ({
       />
       <SafeAreaView style={styles.safeArea} edges={['top']}>
         <KeyboardAvoidingView
-          behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+          behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
           style={styles.keyboardView}
           keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 0}>
           <ScrollView

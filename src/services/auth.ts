@@ -32,7 +32,6 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
   try {
     data = text ? JSON.parse(text) : {};
   } catch (parseError) {
-    console.error('Error parsing response:', parseError);
     data = { message: 'Invalid response from server' };
   }
 
@@ -66,13 +65,6 @@ const handleResponse = async <T>(response: Response): Promise<T> => {
       message: errorMessage,
       status: response.status,
     };
-    
-    console.error('API Error Response:', {
-      status: response.status,
-      statusText: response.statusText,
-      message: errorMessage,
-      data: data,
-    });
     
     throw error;
   }
@@ -162,12 +154,6 @@ export const AuthService = {
       OTP: otp,
     };
 
-    console.log('AuthService.validateOtp: Calling API with payload:', { phone: requestPayload.phone, OTP: '***' });
-    console.log('AuthService.validateOtp: Endpoint:', endpoints.validateOtp);
-    console.log('AuthService.validateOtp: Full payload keys:', Object.keys(requestPayload));
-    console.log('AuthService.validateOtp: Phone value:', requestPayload.phone);
-    console.log('AuthService.validateOtp: OTP length:', requestPayload.OTP.length);
-    
     try {
       const response = await fetch(endpoints.validateOtp, {
         method: 'POST',
@@ -177,7 +163,6 @@ export const AuthService = {
         body: JSON.stringify(requestPayload),
       });
 
-      console.log('AuthService.validateOtp: Response status:', response.status);
       const result = await handleResponse<{
         success: boolean;
         message: string;
@@ -186,11 +171,9 @@ export const AuthService = {
           validated: boolean;
         };
       }>(response);
-      console.log('AuthService.validateOtp: Response result:', { success: result.success, validated: result.data?.validated });
       
       return result;
     } catch (error) {
-      console.error('AuthService.validateOtp: Fetch error:', error);
       // Re-throw to let the caller handle it
       throw error;
     }

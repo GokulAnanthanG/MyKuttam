@@ -31,7 +31,6 @@ export const saveFCMToken = async (fcmToken: string, authToken: string): Promise
 
     return data;
   } catch (error) {
-    console.error('Error saving FCM token:', error);
     throw error;
   }
 };
@@ -57,10 +56,10 @@ export const deleteFCMToken = async (authToken: string): Promise<SaveFCMTokenRes
 
     return data;
   } catch (error) {
-    console.error('Error deleting FCM token:', error);
     throw error;
   }
 };
+
 
 
 

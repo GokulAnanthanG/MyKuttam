@@ -388,7 +388,6 @@ export const DonationService = {
       method: 'GET',
       headers,
     });
-    console.log("api",`${endpoints.donations}${query}`)
     const text = await response.text();
     const data: DonationListResponse = text
       ? JSON.parse(text)

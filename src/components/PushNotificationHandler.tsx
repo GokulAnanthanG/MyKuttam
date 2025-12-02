@@ -26,7 +26,6 @@ export const PushNotificationHandler = () => {
           await getToken();
         }
       } catch (error) {
-        console.error('Error ensuring FCM token after login:', error);
       }
     };
 

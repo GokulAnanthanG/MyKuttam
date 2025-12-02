@@ -16,7 +16,9 @@ import {
   TouchableOpacity,
   View,
   Linking,
+  Switch,
 } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { useFocusEffect } from '@react-navigation/native';
 import Icon from 'react-native-vector-icons/FontAwesome';
@@ -184,6 +186,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     accountHolderName?: string;
     paymentImage?: string; // base64 or URL / data URI
     paymentImagePreviewUri?: string;
+    isUseNumberForUPI?: boolean;
   };
 
   const [mappingDetails, setMappingDetails] = useState<Record<string, MappingDetails>>({});
@@ -251,16 +254,13 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
   const canManageSubcategory = useMemo(() => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
-      console.log('canManageSubcategory: false - not management user');
       return false;
     }
     if (currentUser.role === 'ADMIN' || currentUser.role === 'SUB_ADMIN') {
-      console.log('canManageSubcategory: true - admin/sub-admin');
       return true;
     }
     if (currentUser.role === 'DONATION_MANAGER') {
       if (!currentUser.id) {
-        console.log('canManageSubcategory: false - no user id');
         return false;
       }
       // Check both route params managers and fetched subcategory managers
@@ -269,18 +269,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       const isInRouteManagers = routeManagerIds.includes(currentUser.id);
       const isInSubcategoryManagers = subcategoryManagerIds.includes(currentUser.id);
       
-      console.log('canManageSubcategory check for DONATION_MANAGER:', {
-        currentUserId: currentUser.id,
-        routeManagerIds,
-        subcategoryManagerIds,
-        isInRouteManagers,
-        isInSubcategoryManagers,
-        result: isInRouteManagers || isInSubcategoryManagers,
-      });
-      
       return isInRouteManagers || isInSubcategoryManagers;
     }
-    console.log('canManageSubcategory: false - role not matched');
     return false;
   }, [currentUser, managers, subcategoryManagers]);
 
@@ -371,7 +361,15 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         throw new Error(response.message || 'Failed to load donations');
       }
       const items = response.data?.donations ?? [];
-      setDonations((prev) => (page === 1 ? items : [...prev, ...items]));
+      setDonations((prev) => {
+        if (page === 1) {
+          return items;
+        }
+        // Avoid duplicate items when paginating (backend pages can overlap)
+        const existingIds = new Set(prev.map((d: any) => d.id));
+        const newUniqueItems = items.filter((d: any) => !existingIds.has(d.id));
+        return [...prev, ...newUniqueItems];
+      });
       const totalPages = response.data?.pagination?.totalPages ?? page;
       setDonationHasMore(page < totalPages);
       setDonationPage(page);
@@ -401,7 +399,15 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         throw new Error(response.message || 'Failed to load expenses');
       }
       const items = response.data?.expenses ?? [];
-      setExpenses((prev) => (page === 1 ? items : [...prev, ...items]));
+      setExpenses((prev) => {
+        if (page === 1) {
+          return items;
+        }
+        // Avoid duplicate items when paginating
+        const existingIds = new Set(prev.map((e: any) => e.id));
+        const newUniqueItems = items.filter((e: any) => !existingIds.has(e.id));
+        return [...prev, ...newUniqueItems];
+      });
       const totalPages = response.data?.pagination?.totalPages ?? page;
       setExpenseHasMore(page < totalPages);
       setExpensePage(page);
@@ -415,10 +421,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         subcategoryId,
         { page: 1, limit: 100 },
       );
-      console.log('Subcategory managers response:', response);
       if (response.success && response.data) {
         const managersWithMapping = response.data.donation_managers || [];
-        console.log('Setting subcategory managers:', managersWithMapping);
         setSubcategoryManagers(managersWithMapping);
 
         // Initialize mapping details from server data (if available)
@@ -429,15 +433,14 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
             accountHolderName: manager.accountHolderName || undefined,
             paymentImage: manager.paymentImage || undefined,
             paymentImagePreviewUri: manager.paymentImage || undefined,
+            isUseNumberForUPI: manager.isUseNumberForUPI,
           };
         });
         setMappingDetails(initialDetails);
       } else {
-        console.warn('API returned success=false:', response.message);
         setSubcategoryManagers([]);
       }
     } catch (err) {
-      console.error('Failed to fetch subcategory managers:', err);
       // Set empty array on error so fallback shows
       setSubcategoryManagers([]);
     }
@@ -717,6 +720,16 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     }));
   };
 
+  const handleToggleUseNumberForUPI = (managerId: string, value: boolean) => {
+    setMappingDetails((prev) => ({
+      ...prev,
+      [managerId]: {
+        ...(prev[managerId] || {}),
+        isUseNumberForUPI: value,
+      },
+    }));
+  };
+
   const handleSelectPaymentImage = (managerId: string) => {
     const options = {
       mediaType: 'photo' as MediaType,
@@ -776,6 +789,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           paymentMethod: details.paymentMethod,
           paymentImage: details.paymentImage,
           accountHolderName: details.accountHolderName,
+          isUseNumberForUPI: details.isUseNumberForUPI,
         });
       });
 
@@ -2064,8 +2078,38 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                     <View key={managerWithMapping.id} style={styles.offlineManagerCard}>
                       <Text style={styles.managerName}>{managerWithMapping.name}</Text>
                       {managerWithMapping.phone ? (
-                        <Text style={styles.managerPhone}>{managerWithMapping.phone}</Text>
+                        <View style={styles.phoneRow}>
+                          <Text style={styles.managerPhone}>{managerWithMapping.phone}</Text>
+                          {details.paymentMethod === 'UPI' && details.isUseNumberForUPI && (
+                            <TouchableOpacity
+                              style={styles.copyButton}
+                              onPress={async () => {
+                                try {
+                                  await Clipboard.setString(managerWithMapping.phone);
+                                  Toast.show({
+                                    type: 'success',
+                                    text1: 'Phone number copied',
+                                    text2: 'Use this number in your UPI app for payment',
+                                  });
+                                } catch (error) {
+                                  Toast.show({
+                                    type: 'error',
+                                    text1: 'Failed to copy',
+                                    text2: 'Please try again',
+                                  });
+                                }
+                              }}
+                              activeOpacity={0.7}>
+                              <Icon name="copy" size={12} color={colors.primary} />
+                            </TouchableOpacity>
+                          )}
+                        </View>
                       ) : null}
+                      {details.paymentMethod === 'UPI' && details.isUseNumberForUPI && (
+                        <Text style={styles.upiHintText}>
+                          Use this phone number for UPI payment
+                        </Text>
+                      )}
                       {details.paymentMethod ? (
                         <Text style={styles.metaText}>
                           Payment method: {details.paymentMethod === 'UPI' ? 'UPI' : 'Bank account'}
@@ -2076,21 +2120,25 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                           Account holder: {details.accountHolderName}
                         </Text>
                       ) : null}
-                      <View style={{ marginTop: 8, flexDirection: 'row', gap: 8 }}>
+                      <View style={styles.offlineActionsRow}>
                         <TouchableOpacity
                           style={styles.outlineButton}
                           onPress={() => handleOpenPaymentDetails(managerWithMapping)}
                           activeOpacity={0.9}>
-                          <Icon name="image" size={14} color={colors.primary} />
-                          <Text style={styles.outlineButtonText}>Show payment details</Text>
+                          <Icon name="image" size={12} color={colors.primary} />
+                          <Text style={styles.outlineButtonText} numberOfLines={1}>
+                            payment details
+                          </Text>
                         </TouchableOpacity>
                         {managerWithMapping.phone ? (
                           <TouchableOpacity
                             style={styles.outlineButton}
                             onPress={() => handleOpenWhatsAppChat(managerWithMapping.phone)}
                             activeOpacity={0.9}>
-                            <Icon name="whatsapp" size={14} color={colors.primary} />
-                            <Text style={styles.outlineButtonText}>Message on WhatsApp</Text>
+                            <Icon name="whatsapp" size={12} color={colors.primary} />
+                            <Text style={styles.outlineButtonText} numberOfLines={1}>
+                              Message on WhatsApp
+                            </Text>
                           </TouchableOpacity>
                         ) : null}
                       </View>
@@ -3913,6 +3961,23 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                                 </Text>
                               </TouchableOpacity>
                             </View>
+                            {details.paymentMethod === 'UPI' && (
+                              <View style={styles.useNumberForUPIRow}>
+                                <View style={{ flex: 1 }}>
+                                  <Text style={styles.metaText}>Use phone number for UPI</Text>
+                                  <Text style={styles.helperText}>
+                                    When enabled, donors can pay using this manager's phone number
+                                    in their UPI app.
+                                  </Text>
+                                </View>
+                                <Switch
+                                  value={!!details.isUseNumberForUPI}
+                                  onValueChange={(value) =>
+                                    handleToggleUseNumberForUPI(manager.id, value)
+                                  }
+                                />
+                              </View>
+                            )}
                             <Text style={[styles.metaText, { marginTop: 8 }]}>
                               Account holder name (optional)
                             </Text>
@@ -3977,6 +4042,10 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: colors.background,
+  },
+  modalKeyboardWrapper: {
+    flex: 1,
+    justifyContent: 'center',
   },
   listHeaderContainer: {
     paddingHorizontal: 16,
@@ -4269,17 +4338,20 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: 6,
-    paddingHorizontal: 10,
+    gap: 4,
+    paddingHorizontal: 8,
     paddingVertical: 6,
     borderRadius: 6,
     borderWidth: 1,
     borderColor: colors.primary,
+    flex: 1,
+    minWidth: 0,
   },
   outlineButtonText: {
     fontFamily: fonts.body,
-    fontSize: 12,
+    fontSize: 11,
     color: colors.primary,
+    flexShrink: 1,
   },
   moreButton: {
     paddingLeft: 4,
@@ -4719,6 +4791,19 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     backgroundColor: colors.cardMuted,
   },
+  useNumberForUPIRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+    gap: 8,
+  },
+  helperText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 2,
+  },
   managerItemHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -4757,6 +4842,27 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.textMuted,
     marginTop: 2,
+    flex: 1,
+  },
+  phoneRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 2,
+  },
+  copyButton: {
+    padding: 4,
+    borderRadius: 4,
+    backgroundColor: colors.cardMuted,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  upiHintText: {
+    fontFamily: fonts.body,
+    fontSize: 10,
+    color: colors.primary,
+    marginTop: 4,
+    fontStyle: 'italic',
   },
   statusBadgeActive: {
     paddingHorizontal: 8,
@@ -4769,6 +4875,15 @@ const styles = StyleSheet.create({
     paddingVertical: 4,
     borderRadius: 12,
     backgroundColor: 'rgba(240, 68, 56, 0.12)',
+  },
+  offlineActionsRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'stretch',
+  },
+  upiNumberInfoContainer: {
+    marginTop: 8,
   },
   statusBadgeTextSmall: {
     fontFamily: fonts.heading,

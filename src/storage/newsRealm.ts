@@ -97,7 +97,6 @@ export const saveNewsImagesToRealm = async (newsItems: News[]) => {
       });
     });
   } catch (error) {
-    console.error('Error saving news images to Realm:', error);
   }
 };
 
@@ -125,7 +124,6 @@ export const getStoredNewsImages = async (): Promise<News[]> => {
       noOfLikes: item.noOfLikes || 0,
     }));
   } catch (error) {
-    console.error('Error getting stored news images from Realm:', error);
     return [];
   }
 };

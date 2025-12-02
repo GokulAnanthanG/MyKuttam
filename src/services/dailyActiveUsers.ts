@@ -70,7 +70,6 @@ export class DailyActiveUserService {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error('Error recording daily active user:', error);
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to record daily active user',
@@ -98,7 +97,6 @@ export class DailyActiveUserService {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error('Error getting daily active user count:', error);
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to get daily active user count',
@@ -129,7 +127,6 @@ export class DailyActiveUserService {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error('Error getting daily active user count range:', error);
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to get daily active user count range',
@@ -168,7 +165,6 @@ export class DailyActiveUserService {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error('Error listing users:', error);
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to list users',
@@ -204,7 +200,6 @@ export class DailyActiveUserService {
       const data = await response.json();
       return data;
     } catch (error) {
-      console.error('Error getting active users with details:', error);
       return {
         success: false,
         message: error instanceof Error ? error.message : 'Failed to get active users with details',

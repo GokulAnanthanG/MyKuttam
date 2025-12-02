@@ -58,7 +58,6 @@ export const GalleryScreen = () => {
     async (pageNum: number = 1, append: boolean = false) => {
       // Prevent multiple simultaneous calls
       if (isFetchingRef.current) {
-        console.log('Gallery: Already fetching, skipping duplicate call');
         return;
       }
 
@@ -68,7 +67,6 @@ export const GalleryScreen = () => {
       setIsOnline(isConnected);
 
       if (!isConnected) {
-        console.log('Gallery: Offline, loading from cache');
         // Load from Realm cache when offline
         try {
           const storedImages = await getStoredGalleryImages();
@@ -98,7 +96,6 @@ export const GalleryScreen = () => {
             }
           }
         } catch (realmError) {
-          console.error('Error loading from Realm:', realmError);
           if (pageNum === 1) {
             setImages([]);
           }
@@ -132,12 +129,6 @@ export const GalleryScreen = () => {
         // Ensure we have valid response data
         const imagesData = response?.data?.images || [];
         
-        console.log('Gallery fetch result:', {
-          requestedStatus: apiStatus,
-          imagesCount: imagesData.length,
-          imageStatuses: imagesData.map(img => ({ id: img.id, status: img.status })),
-          responseSuccess: response?.success,
-        });
         
         if (append) {
           setImages((prev) => [...prev, ...imagesData]);
@@ -153,7 +144,6 @@ export const GalleryScreen = () => {
         setHasMore(pageNum < (response?.data?.pagination?.totalPages || 0));
         setPage(pageNum);
       } catch (error) {
-        console.error('Gallery fetch error:', error);
         
         // Check if error is due to network
         const isNetworkError = 
@@ -195,7 +185,6 @@ export const GalleryScreen = () => {
               }
             }
           } catch (realmError) {
-            console.error('Error loading from Realm:', realmError);
             // No cached images, ensure empty state
             if (pageNum === 1) {
               setImages([]);
@@ -508,7 +497,6 @@ export const GalleryScreen = () => {
     <Pressable
       style={styles.imageContainer}
       onPress={() => {
-        console.log('Image selected:', item.id, item.image_url);
         setSelectedImage(item);
       }}
       android_ripple={{ color: colors.primary + '20' }}>
@@ -689,7 +677,6 @@ export const GalleryScreen = () => {
                   style={styles.modalImage}
                   resizeMode="contain"
                   onError={(error) => {
-                    console.log('Image load error:', error);
                     Toast.show({
                       type: 'error',
                       text1: 'Error',
@@ -697,7 +684,6 @@ export const GalleryScreen = () => {
                     });
                   }}
                   onLoad={() => {
-                    console.log('Image loaded successfully:', selectedImage.image_url);
                   }}
                 />
                 <View style={styles.modalInfo}>

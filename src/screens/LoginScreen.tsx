@@ -36,7 +36,7 @@ export const LoginScreen = ({ navigation }: Props) => {
   return (
     <AuthSimpleLayout
       title="Welcome back"
-      subtitle="Access your community dashboard with your registered phone number.">
+      subtitle="Access your community space with your registered phone number.">
       <View style={styles.form}>
         <View style={styles.greeting}>
           <Text style={styles.hero}>MyKuttam</Text>

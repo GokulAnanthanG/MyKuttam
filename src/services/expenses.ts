@@ -121,7 +121,6 @@ export const ExpenseService = {
   }): Promise<ExpenseListResponse> => {
     const headers = await getAuthHeaders();
     const query = buildQueryString(params);
-    console.log("expenses api", `${endpoints.expenses}${query}`);
     const response = await fetch(`${endpoints.expenses}${query}`, {
       method: 'GET',
       headers,

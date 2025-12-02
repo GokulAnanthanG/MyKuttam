@@ -77,13 +77,10 @@ export const HomeScreen = () => {
         // Silently record user as active - don't show errors to user
         const response = await DailyActiveUserService.recordActiveUser();
         if (response.success) {
-          console.log('Daily active user recorded:', response.data?.isNewRecord ? 'New record' : 'Already counted');
         } else {
-          console.warn('Failed to record daily active user:', response.message);
         }
       } catch (error) {
         // Silently fail - don't interrupt user experience
-        console.error('Error recording daily active user:', error);
       }
     };
 
@@ -109,7 +106,6 @@ export const HomeScreen = () => {
                 authStatus === messaging.AuthorizationStatus.PROVISIONAL
               : authStatus === messaging.AuthorizationStatus.AUTHORIZED;
 
-          console.log('Notification permission status:', hasPermission, 'Auth status:', authStatus);
 
           // Only show alert if permission is actually not granted
           if (!hasPermission) {
@@ -130,7 +126,6 @@ export const HomeScreen = () => {
                     // Since notifications are disabled in device settings, requestPermission won't work
                     if (Platform.OS === 'ios') {
                       Linking.openURL('app-settings:').catch((err) => {
-                        console.error('Error opening iOS settings:', err);
                         Alert.alert(
                           'Open Settings',
                           'Please go to Settings > [App Name] > Notifications and enable them manually.'
@@ -138,7 +133,6 @@ export const HomeScreen = () => {
                       });
                     } else {
                       Linking.openSettings().catch((err) => {
-                        console.error('Error opening Android settings:', err);
                         Alert.alert(
                           'Open Settings',
                           'Please go to Settings > Apps > [App Name] > Notifications and enable them manually.'
@@ -155,7 +149,6 @@ export const HomeScreen = () => {
             hasCheckedNotificationPermission.current = true;
           }
         } catch (error) {
-          console.error('Error checking notification permission:', error);
           // On error, don't show the alert
           hasCheckedNotificationPermission.current = true;
         }

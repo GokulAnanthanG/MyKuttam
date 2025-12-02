@@ -91,6 +91,33 @@ const formatAudioTime = (seconds: number): string => {
   return `${paddedMins}:${paddedSecs}`;
 };
 
+const getFullImageUrl = (url: string | undefined | null): string | undefined => {
+  if (!url) return undefined;
+  
+  // If URL is already absolute, return as is
+  if (url.startsWith('http://') || url.startsWith('https://')) {
+    return url;
+  }
+  
+  // If URL is relative, construct full URL with BASE_URL
+  if (BASE_URL) {
+    try {
+      // Remove trailing slash from BASE_URL if present
+      let baseUrl = BASE_URL.replace(/\/$/, '');
+      // Remove /api from BASE_URL if present (for media files, we want the base URL)
+      baseUrl = baseUrl.replace(/\/api$/, '');
+      // Ensure url starts with /
+      const cleanUrl = url.startsWith('/') ? url : `/${url}`;
+      const fullUrl = `${baseUrl}${cleanUrl}`;
+      return fullUrl;
+    } catch (error) {
+      return url;
+    }
+  }
+  
+  return url;
+};
+
 export const NewsScreen = () => {
   const { currentUser } = useAuth();
   const [highlightedNews, setHighlightedNews] = useState<News[]>([]);
@@ -157,7 +184,6 @@ export const NewsScreen = () => {
           setAudioPosition(info.currentTime);
         }
       } catch (error) {
-        console.warn('Audio progress error:', error);
       }
     };
 
@@ -203,7 +229,6 @@ export const NewsScreen = () => {
       try {
         SoundPlayer.stop();
       } catch (stopError) {
-        console.warn('Failed to stop audio on cleanup:', stopError);
       }
       stopAudioProgressInterval();
       resetAudioProgress();
@@ -325,7 +350,6 @@ export const NewsScreen = () => {
           }
           return null;
         } catch (error) {
-          console.error(`Error checking like status for news ${news.id}:`, error);
           return null;
         }
       });
@@ -337,7 +361,6 @@ export const NewsScreen = () => {
         return newSet;
       });
     } catch (error) {
-      console.error('Error checking like statuses:', error);
     }
   }, [currentUser]);
 
@@ -359,16 +382,13 @@ export const NewsScreen = () => {
           }
         } else {
           // Backend returned success but no news data
-          console.warn('No news data in highlighted response:', response);
           setHighlightedNews([]);
         }
       } else {
         // Handle case where response is not successful
-        console.warn('Failed to fetch highlighted news:', response.message);
         setHighlightedNews([]);
       }
     } catch (error) {
-      console.error('Error fetching highlighted news:', error);
       const errorMessage = error instanceof Error ? error.message : 'Failed to load highlighted news';
       
       // If offline, try to load from Realm
@@ -387,7 +407,6 @@ export const NewsScreen = () => {
             return;
           }
         } catch (realmError) {
-          console.error('Error loading from Realm:', realmError);
         }
       }
       
@@ -426,7 +445,6 @@ export const NewsScreen = () => {
             return;
           }
         } catch (realmError) {
-          console.error('Error loading from Realm:', realmError);
         }
       }
 
@@ -486,7 +504,6 @@ export const NewsScreen = () => {
             setHasMore(false);
             // Don't show error if it's just empty data
             if (pageNum === 1 && response.data && !response.data.news) {
-              console.log('No news data in response:', response);
             }
           }
         } else {
@@ -504,7 +521,6 @@ export const NewsScreen = () => {
           setHasMore(false);
         }
       } catch (error) {
-        console.error('Error fetching featured news:', error);
         const errorMessage = error instanceof Error ? error.message : 'Failed to load news';
         
         // If network error and first page, try to load from Realm
@@ -526,7 +542,6 @@ export const NewsScreen = () => {
               return;
             }
           } catch (realmError) {
-            console.error('Error loading from Realm:', realmError);
           }
         }
         
@@ -781,7 +796,6 @@ export const NewsScreen = () => {
       // canOpenURL can be unreliable on some platforms, so we try opening directly
       await Linking.openURL(normalizedUrl);
     } catch (error) {
-      console.error('Error opening URL:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       
       // Check if it's a specific linking error
@@ -807,7 +821,6 @@ export const NewsScreen = () => {
     try {
       SoundPlayer.stop();
     } catch (error) {
-      console.warn('Audio stop error:', error);
     } finally {
       stopAudioProgressInterval();
       resetAudioProgress();
@@ -831,12 +844,10 @@ export const NewsScreen = () => {
           (SoundPlayer as any).setCurrentTime(newPosition);
         } else {
           // If seek is not available, we'll update the position state but can't actually seek
-          console.warn('Seek functionality not available in this version of react-native-sound-player');
         }
         setAudioPosition(newPosition);
       }
     } catch (error) {
-      console.warn('Audio seek error:', error);
       // If seek fails, at least update the UI state
       const info = await SoundPlayer.getInfo().catch(() => null);
       if (info && typeof info.currentTime === 'number') {
@@ -865,7 +876,6 @@ export const NewsScreen = () => {
       }
       setAudioPosition(0);
     } catch (error) {
-      console.warn('Audio restart error:', error);
       // If restart fails, try to stop and replay
       try {
         SoundPlayer.stop();
@@ -875,7 +885,6 @@ export const NewsScreen = () => {
         }
         setAudioPosition(0);
       } catch (replayError) {
-        console.warn('Audio replay error:', replayError);
       }
     }
   }, [currentAudioId, highlightedNews, featuredNews]);
@@ -904,7 +913,6 @@ export const NewsScreen = () => {
             setIsAudioPlaying(true);
             startAudioProgressTracking();
           } catch (resumeError) {
-            console.warn('Resume failed, replaying audio:', resumeError);
             SoundPlayer.playUrl(news.media_src);
             setIsAudioPlaying(true);
             startAudioProgressTracking();
@@ -914,7 +922,6 @@ export const NewsScreen = () => {
         try {
           SoundPlayer.stop();
         } catch (stopError) {
-          console.warn('Audio stop before play error:', stopError);
         }
         stopAudioProgressInterval();
         resetAudioProgress();
@@ -924,7 +931,6 @@ export const NewsScreen = () => {
         startAudioProgressTracking();
       }
     } catch (error) {
-      console.error('Audio playback error:', error);
       Toast.show({
         type: 'error',
         text1: 'Audio Playback Error',
@@ -938,7 +944,6 @@ export const NewsScreen = () => {
   };
 
   const handleMediaError = (context: string, error: unknown) => {
-    console.error(context, error);
     Toast.show({
       type: 'error',
       text1: 'Media Playback Error',
@@ -1207,7 +1212,6 @@ export const NewsScreen = () => {
     // This endpoint includes Open Graph tags for rich link previews
     // Always use BASE_URL from environment variable
     if (!BASE_URL) {
-      console.error('BASE_URL is not configured. Please set API_BASE_URL in .env file');
       return '';
     }
     
@@ -1452,10 +1456,18 @@ export const NewsScreen = () => {
                 activeOpacity={0.9}
                 onPress={(e) => {
                   e.stopPropagation();
-                  setSelectedImageUri(item.media_src || null);
+                  const fullImageUrl = getFullImageUrl(item.media_src);
+                  setSelectedImageUri(fullImageUrl || item.media_src || null);
                   setImageModalVisible(true);
-                }}>
-                <Image source={{ uri: item.media_src }} style={styles.highlightBackgroundImage} resizeMode="cover" />
+                }}
+                style={styles.highlightImageTouchable}>
+                <Image 
+                  source={{ uri: getFullImageUrl(item.media_src) || item.media_src || '' }} 
+                  style={styles.highlightBackgroundImage} 
+                  resizeMode="cover"
+                  onError={(error) => {
+                  }}
+                />
               </TouchableOpacity>
             ) : item.media_type === 'VIDEO' ? (
               <View style={[styles.highlightBackgroundImage, styles.highlightVideoPlaceholder]}>
@@ -2132,9 +2144,11 @@ export const NewsScreen = () => {
             <ScrollView style={styles.highlightModalContent}>
               {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'IMAGE' && (
                 <Image
-                  source={{ uri: selectedHighlightNews.media_src }}
+                  source={{ uri: getFullImageUrl(selectedHighlightNews.media_src) || selectedHighlightNews.media_src }}
                   style={styles.highlightModalImage}
                   resizeMode="cover"
+                  onError={(error) => {
+                  }}
                 />
               )}
 
@@ -2565,12 +2579,20 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 5,
   },
+  highlightImageTouchable: {
+    width: '100%',
+    height: '100%',
+    position: 'absolute',
+    top: 0,
+    left: 0,
+  },
   highlightBackgroundImage: {
     width: '100%',
     height: '100%',
     position: 'absolute',
     top: 0,
     left: 0,
+    backgroundColor: colors.cardMuted,
   },
   highlightImagePlaceholder: {
     backgroundColor: colors.cardMuted,

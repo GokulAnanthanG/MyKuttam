@@ -4,7 +4,6 @@ try {
   Config = require('react-native-config').default;
 } catch (e) {
   // react-native-config not available
-  console.warn('react-native-config not available');
 }
 
 // Always use API_BASE_URL from environment variable, no fallback

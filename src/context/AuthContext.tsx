@@ -78,7 +78,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setCurrentUser(user);
         }
       } catch (error) {
-        console.error('Error loading stored user:', error);
+        // Error loading stored user
       } finally {
         setInitializing(false);
       }
@@ -143,7 +143,28 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       await AuthService.requestOtp({ phone });
       showSuccess('OTP sent to your phone.');
       return true;
-    } catch (error) {
+    } catch (error: any) {
+      // Extract error message
+      let errorMessage = 'Failed to request OTP. Please try again.';
+      
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      
+      // Check if error message indicates OTP already validated
+      const normalizedMessage = errorMessage.toLowerCase().trim();
+      if (normalizedMessage.includes('a validated otp already exists for this phone') ||
+          normalizedMessage.includes('validated otp already exists')) {
+        showSuccess('OTP already validated. Proceeding to registration.');
+        // Throw a special error that handleSendOtp can catch to trigger navigation
+        const navigationError = new Error('OTP_ALREADY_VALIDATED');
+        (navigationError as any).shouldNavigate = true;
+        (navigationError as any).originalMessage = errorMessage;
+        throw navigationError;
+      }
+      
       showError(error);
       return false;
     } finally {
@@ -155,42 +176,54 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const trimmedPhone = phone?.trim() || '';
     const trimmedOtp = otp?.trim() || '';
     
-    console.log('AuthContext.validateOtp: Called with phone:', trimmedPhone);
-    console.log('AuthContext.validateOtp: Called with OTP length:', trimmedOtp.length);
-    
     if (!trimmedPhone || !trimmedOtp) {
-      console.error('AuthContext.validateOtp: Phone or OTP is empty!', { phone: trimmedPhone, otpLength: trimmedOtp.length });
       showError('Phone and OTP are required');
       return false;
     }
 
     try {
       setLoading(true);
-      console.log('AuthContext.validateOtp: Calling AuthService.validateOtp with:', { phone: trimmedPhone, OTP: trimmedOtp });
       const result = await AuthService.validateOtp({ phone: trimmedPhone, OTP: trimmedOtp });
-      console.log('AuthContext.validateOtp: Service result:', { success: result.success, validated: result.data?.validated });
-      
+    
       if (result.success && result.data?.validated) {
         showSuccess(result.message || 'OTP validated successfully!');
         return true;
       } else {
         // Show error if validation failed - use server message if available
         const errorMessage = result.message || 'Invalid or expired OTP. Please try again.';
+        
+        // If error message indicates OTP already validated, allow navigation to registration
+        const normalizedMessage = errorMessage.toLowerCase().trim();
+        if (normalizedMessage.includes('otp has already been validated') ||
+            normalizedMessage.includes('already been validated')) {
+          showSuccess('OTP already validated. Proceeding to registration.');
+          return true;
+        }
+        
         showError(errorMessage);
       }
       return false;
     } catch (error: any) {
-      console.error('AuthContext.validateOtp: Error caught:', error);
-      
-      // Extract clear error message
+      // Extract clear error message - check for OTP already validated message FIRST
       let errorMessage = 'Failed to validate OTP. Please try again.';
       
       if (error?.message) {
         errorMessage = error.message;
       } else if (typeof error === 'string') {
         errorMessage = error;
-      } else if (error?.status) {
-        // Handle different HTTP status codes
+      }
+      
+      // Check for OTP already validated message IMMEDIATELY after extraction
+      const normalizedMessage = errorMessage.toLowerCase().trim();
+      
+      if (normalizedMessage.includes('otp has already been validated') ||
+          normalizedMessage.includes('already been validated')) {
+        showSuccess('OTP already validated. Proceeding to registration.');
+        return true;
+      }
+      
+      // Handle different HTTP status codes for other errors
+      if (error?.status) {
         switch (error.status) {
           case 400:
             errorMessage = error.message || 'Invalid request. Please check your phone number and OTP.';
@@ -350,7 +383,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         await deleteFCMToken(token);
       }
     } catch (error) {
-      console.error('Error deleting FCM token on logout:', error);
+      // Error deleting FCM token on logout
     }
     
     await clearStoredUser();

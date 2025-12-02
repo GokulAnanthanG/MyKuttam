@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { StyleSheet, Text, View, Alert } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Toast from 'react-native-toast-message';
 import { RootStackParamList } from '../navigation/AppNavigator';
@@ -40,31 +40,35 @@ export const OtpScreen = ({ navigation, route }: Props) => {
       return;
     }
 
-    const success = await requestOtp(phone.trim());
-    if (success) {
-      setOtpRequested(true);
-      // Reset OTP when requesting new OTP
-      setOtp('');
-      setValidating(false);
+    try {
+      const success = await requestOtp(phone.trim());
+      if (success) {
+        // OTP was sent successfully
+        setOtpRequested(true);
+        // Reset OTP when requesting new OTP
+        setOtp('');
+        setValidating(false);
+      }
+    } catch (error: any) {
+      // Check if this is the special error for "OTP already validated"
+      if (error?.message === 'OTP_ALREADY_VALIDATED' || error?.shouldNavigate) {
+        // Navigate to registration if OTP is already validated
+        navigation.navigate('Register', {
+          phone: phone.trim(),
+        });
+        return;
+      }
+      
+      // For other errors, the error toast is already shown by requestOtp
     }
   };
 
   const handleContinue = async () => {
-    console.log('=== OTP Validation Button Clicked ===');
     const trimmedPhone = phone.trim();
     const trimmedOtp = otp.trim();
-    console.log('Phone:', trimmedPhone);
-    console.log('OTP:', trimmedOtp);
-    console.log('Phone Length:', trimmedPhone.length);
-    console.log('OTP Length:', trimmedOtp.length);
-    console.log('OTP Requested:', otpRequested);
-    console.log('Validating:', validating);
-    console.log('Loading:', loading);
-    console.log('Can Continue:', canContinue);
     
     // Validate phone number
     if (trimmedPhone.length === 0) {
-      Alert.alert('Phone Required', 'Please enter your phone number.');
       Toast.show({
         type: 'error',
         text1: 'Phone Required',
@@ -74,7 +78,6 @@ export const OtpScreen = ({ navigation, route }: Props) => {
     }
 
     if (trimmedPhone.length !== 10) {
-      Alert.alert('Invalid Phone', 'Please enter a valid 10-digit phone number.');
       Toast.show({
         type: 'error',
         text1: 'Invalid Phone',
@@ -85,7 +88,6 @@ export const OtpScreen = ({ navigation, route }: Props) => {
 
     // Validate OTP input
     if (trimmedOtp.length === 0) {
-      Alert.alert('OTP Required', 'Please enter the OTP sent to your phone.');
       Toast.show({
         type: 'error',
         text1: 'OTP Required',
@@ -95,7 +97,6 @@ export const OtpScreen = ({ navigation, route }: Props) => {
     }
 
     if (!otpRequested) {
-      Alert.alert('OTP Not Requested', 'Please request an OTP first.');
       Toast.show({
         type: 'error',
         text1: 'OTP Not Requested',
@@ -106,34 +107,26 @@ export const OtpScreen = ({ navigation, route }: Props) => {
 
     // Prevent multiple simultaneous calls
     if (validating || loading) {
-      console.log('Already validating or loading, skipping...');
       return;
     }
 
-    console.log('OTP Validation: Starting validation for phone:', trimmedPhone);
-    console.log('OTP Validation: OTP to validate:', trimmedOtp);
-    Alert.alert('Validating OTP', 'Please wait while we validate your OTP...');
     setValidating(true);
     
     try {
-      console.log('OTP Validation: Calling validateOtp API with:', { phone: trimmedPhone, OTP: trimmedOtp });
       const success = await validateOtp(trimmedPhone, trimmedOtp);
-      console.log('OTP Validation: API response success:', success);
       
       if (success) {
         // OTP validated successfully, navigate to registration
-        console.log('OTP Validation: Success! Navigating to Register screen');
-        Alert.alert('Success', 'OTP validated successfully!');
         navigation.navigate('Register', {
           phone: trimmedPhone,
         });
       } else {
-        console.log('OTP Validation: Failed - error already shown by validateOtp');
-        Alert.alert('Validation Failed', 'Invalid or expired OTP. Please try again.');
-        // Error is already shown by validateOtp in AuthContext
+        // Don't show Alert - error toast is already shown by validateOtp in AuthContext
+        // Only navigate if the toast message indicates OTP already validated
+        // (This is a fallback in case validateOtp returns false but showed success toast)
+        // Error toast is already shown by AuthContext, no need for Alert
       }
     } catch (error: any) {
-      console.error('OTP Validation: Exception caught:', error);
       
       // Extract error message
       let errorMessage = 'Failed to validate OTP. Please try again.';
@@ -143,7 +136,20 @@ export const OtpScreen = ({ navigation, route }: Props) => {
         errorMessage = error;
       }
       
-      Alert.alert('Validation Failed', errorMessage);
+      // If error message indicates OTP already validated, allow navigation to registration
+      const normalizedMessage = errorMessage.toLowerCase().trim();
+      if (normalizedMessage.includes('otp has already been validated') ||
+          normalizedMessage.includes('already been validated')) {
+        // Navigate to registration if OTP is already validated
+        // Toast is already shown by AuthContext, just navigate
+        navigation.navigate('Register', {
+          phone: trimmedPhone,
+        });
+        return;
+      }
+      
+      // Error toast is already shown by AuthContext, no need for additional Alert
+      // Just show toast for any additional error context if needed
       Toast.show({
         type: 'error',
         text1: 'Validation Failed',
@@ -194,19 +200,9 @@ export const OtpScreen = ({ navigation, route }: Props) => {
               onChangeText={setOtp}
               editable={!validating}
             />
-            {/* Debug info */}
-            <View style={styles.debugInfo}>
-              <Text style={styles.debugText}>
-                OTP Length: {otp.trim().length} | Requested: {otpRequested ? 'Yes' : 'No'} | Can Continue: {canContinue ? 'Yes' : 'No'}
-              </Text>
-            </View>
             <PrimaryButton
               label="Continue to registration"
-              onPress={() => {
-                console.log('Button pressed! Can continue:', canContinue);
-                Alert.alert('Button Clicked', `Button was clicked! Can continue: ${canContinue}`);
-                handleContinue();
-              }}
+              onPress={handleContinue}
               loading={validating || loading}
               disabled={!canContinue || validating}
             />
@@ -274,18 +270,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: colors.primary,
     marginTop: 8,
-    textAlign: 'center',
-  },
-  debugInfo: {
-    padding: 8,
-    backgroundColor: colors.cardMuted,
-    borderRadius: 8,
-    marginVertical: 4,
-  },
-  debugText: {
-    fontFamily: fonts.body,
-    fontSize: 10,
-    color: colors.textMuted,
     textAlign: 'center',
   },
 });

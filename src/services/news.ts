@@ -184,12 +184,6 @@ export const NewsService = {
     
     const url = `${endpoints.newsList}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     
-    // Log URL for debugging
-    if (__DEV__) {
-      console.log("Fetching news list from:", url);
-      console.log("Headers:", headers);
-    }
-    
     const response = await fetch(url, {
       method: 'GET',
       headers,
@@ -197,28 +191,15 @@ export const NewsService = {
 
     const text = await response.text();
     
-    // Log response for debugging
-    if (__DEV__) {
-      console.log("Response status:", response.status);
-      console.log("Response text:", text.substring(0, 200)); // First 200 chars
-    }
-    
     let data: NewsResponse;
     try {
       data = text ? JSON.parse(text) : { success: false, message: 'Empty response', data: {} };
     } catch (parseError) {
-      if (__DEV__) {
-        console.error("Failed to parse JSON response:", parseError);
-        console.error("Response text:", text);
-      }
       throw new Error(`Invalid response format from server (Status: ${response.status})`);
     }
 
     if (!response.ok) {
       const errorMsg = data.message || `Failed to fetch news list (Status: ${response.status})`;
-      if (__DEV__) {
-        console.error("Error fetching news list:", errorMsg, data);
-      }
       throw new Error(errorMsg);
     }
 
@@ -244,12 +225,6 @@ export const NewsService = {
     
     const url = `${endpoints.newsHighlighted}${queryParams.toString() ? `?${queryParams.toString()}` : ''}`;
     
-    // Log URL for debugging
-    if (__DEV__) {
-      console.log("Fetching highlighted news from:", url);
-      console.log("Headers:", headers);
-    }
-    
     const response = await fetch(url, {
       method: 'GET',
       headers,
@@ -257,28 +232,15 @@ export const NewsService = {
     
     const text = await response.text();
     
-    // Log response for debugging
-    if (__DEV__) {
-      console.log("Response status:", response.status);
-      console.log("Response text:", text.substring(0, 200)); // First 200 chars
-    }
-    
     let data: NewsResponse;
     try {
       data = text ? JSON.parse(text) : { success: false, message: 'Empty response', data: {} };
     } catch (parseError) {
-      if (__DEV__) {
-        console.error("Failed to parse JSON response:", parseError);
-        console.error("Response text:", text);
-      }
       throw new Error(`Invalid response format from server (Status: ${response.status})`);
     }
 
     if (!response.ok) {
       const errorMsg = data.message || `Failed to fetch highlighted news (Status: ${response.status})`;
-      if (__DEV__) {
-        console.error("Error fetching highlighted news:", errorMsg, data);
-      }
       throw new Error(errorMsg);
     }
 

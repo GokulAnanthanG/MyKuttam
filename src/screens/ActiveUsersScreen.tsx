@@ -93,7 +93,6 @@ export const ActiveUsersScreen = () => {
         setTodayCount(response.data.count);
       }
     } catch (error) {
-      console.error('Error fetching today count:', error);
     }
   }, []);
 
@@ -107,7 +106,6 @@ export const ActiveUsersScreen = () => {
         setSelectedDateCount(0);
       }
     } catch (error) {
-      console.error('Error fetching selected date count:', error);
       setSelectedDateCount(0);
     }
   }, []);

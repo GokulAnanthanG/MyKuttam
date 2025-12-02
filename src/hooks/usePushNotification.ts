@@ -46,7 +46,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
   const requestPermission = async (): Promise<boolean> => {
     // Prevent multiple simultaneous permission requests
     if (isRequestingPermission.current) {
-      console.log('Permission request already in progress');
       return isPermissionGranted;
     }
 
@@ -75,7 +74,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
         return granted;
       }
     } catch (error) {
-      console.error('Error requesting notification permission:', error);
       setIsPermissionGranted(false);
       return false;
     } finally {
@@ -96,15 +94,12 @@ export const usePushNotification = (): UsePushNotificationReturn => {
       if (token && authToken) {
         try {
           await saveFCMToken(token, authToken);
-          console.log('FCM token sent to backend successfully');
         } catch (error) {
-          console.error('Error sending FCM token to backend:', error);
         }
       }
       
       return token;
     } catch (error) {
-      console.error('Error getting FCM token:', error);
       setFcmToken(null);
       return null;
     }
@@ -118,7 +113,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
       await messaging().deleteToken();
       setFcmToken(null);
     } catch (error) {
-      console.error('Error deleting FCM token:', error);
     }
   };
 
@@ -127,7 +121,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
    */
   useEffect(() => {
     const unsubscribe = messaging().onMessage(async (remoteMessage: FirebaseMessagingTypes.RemoteMessage) => {
-      console.log('Foreground notification received:', remoteMessage);
 
       const { notification, data } = remoteMessage;
 
@@ -166,7 +159,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
       .getInitialNotification()
       .then((remoteMessage: FirebaseMessagingTypes.RemoteMessage | null) => {
         if (remoteMessage) {
-          console.log('Notification opened app from closed state:', remoteMessage);
           handleNotificationNavigation(remoteMessage.data);
         }
       });
@@ -174,7 +166,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
     // Handle notification that opened the app from background
     const unsubscribe = messaging().onNotificationOpenedApp(
       (remoteMessage: FirebaseMessagingTypes.RemoteMessage) => {
-        console.log('Notification opened app from background:', remoteMessage);
         handleNotificationNavigation(remoteMessage.data);
       }
     );
@@ -187,7 +178,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
    */
   useEffect(() => {
     const unsubscribe = messaging().onTokenRefresh(async (token: string) => {
-      console.log('FCM token refreshed:', token);
       setFcmToken(token);
       
       // Send new token to backend
@@ -195,9 +185,7 @@ export const usePushNotification = (): UsePushNotificationReturn => {
       if (token && authToken) {
         try {
           await saveFCMToken(token, authToken);
-          console.log('Refreshed FCM token sent to backend');
         } catch (error) {
-          console.error('Error sending refreshed FCM token to backend:', error);
         }
       }
     });
@@ -248,14 +236,12 @@ export const usePushNotification = (): UsePushNotificationReturn => {
 
         // If permission is not granted, request it immediately on app launch
         if (!hasPermission) {
-          console.log('Notification permission not granted, requesting...');
           await requestPermission();
         } else {
           // Permission already granted, get FCM token
           await getToken();
         }
       } catch (error) {
-        console.error('Error initializing push notifications:', error);
       } finally {
         setIsLoading(false);
       }
@@ -273,7 +259,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
     try {
       // Check if navigation is available
       if (!navigation || !navigation.navigate) {
-        console.warn('Navigation not available yet');
         return;
       }
 
@@ -310,7 +295,6 @@ export const usePushNotification = (): UsePushNotificationReturn => {
           });
       }
     } catch (error) {
-      console.error('Error handling notification navigation:', error);
     }
   };
 
