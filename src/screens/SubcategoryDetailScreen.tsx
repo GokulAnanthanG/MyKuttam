@@ -2034,8 +2034,13 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
             </Text>
             <View style={{ marginTop: 16, gap: 12 }}>
               <TouchableOpacity
-                style={styles.primaryOptionButton}
-                onPress={handleSelectOnlineDonation}
+              //  style={styles.primaryOptionButton}
+              //  onPress={handleSelectOnlineDonation}
+                style={[styles.primaryOptionButton, styles.primaryOptionButtonDisabled]}
+                onPress={() => {
+                  Alert.alert('Coming soon', 'Online payment is not available yet.');
+                }}
+                disabled={true}
                 activeOpacity={0.9}>
                 <Icon name="credit-card" size={16} color="#fff" />
                 <Text style={styles.primaryOptionButtonText}>Online payment</Text>
@@ -4312,6 +4317,10 @@ const styles = StyleSheet.create({
     paddingVertical: 10,
     borderRadius: 8,
     backgroundColor: colors.primary,
+  },
+  primaryOptionButtonDisabled: {
+    opacity: 0.5,
+    backgroundColor: colors.textMuted,
   },
   primaryOptionButtonText: {
     fontFamily: fonts.heading,
