@@ -49,6 +49,7 @@ export const GalleryScreen = () => {
   const [uploadDescription, setUploadDescription] = useState('');
   const [uploading, setUploading] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
+  const [showFullscreenImage, setShowFullscreenImage] = useState(false);
   const isFetchingRef = useRef(false);
   const hasShownOfflineToastRef = useRef(false);
 
@@ -462,7 +463,7 @@ export const GalleryScreen = () => {
         type: 'success',
         text1: 'Image Uploaded',
         text2: 'Your image has been uploaded successfully. It will appear in the gallery once approved by admin.',
-        visibilityTime: 4000,
+        visibilityTime: 6000,
       });
       // Reset form
       setSelectedImageUri(null);
@@ -647,7 +648,7 @@ export const GalleryScreen = () => {
                   </Text>
                 </View>
                 <View style={styles.modalHeaderRight}>
-                  {selectedImage && isImageOwner(selectedImage) && (
+                  {selectedImage && (isImageOwner(selectedImage) || isAdmin) && (
                     <TouchableOpacity
                       style={styles.deleteButtonModal}
                       onPress={() => {
@@ -672,20 +673,24 @@ export const GalleryScreen = () => {
                 contentContainerStyle={styles.modalScrollContent}
                 showsVerticalScrollIndicator={false}
                 bounces={false}>
-                <Image
-                  source={{ uri: selectedImage.image_url }}
-                  style={styles.modalImage}
-                  resizeMode="contain"
-                  onError={(error) => {
-                    Toast.show({
-                      type: 'error',
-                      text1: 'Error',
-                      text2: 'Failed to load image',
-                    });
-                  }}
-                  onLoad={() => {
-                  }}
-                />
+                <TouchableOpacity
+                  onPress={() => setShowFullscreenImage(true)}
+                  activeOpacity={0.9}>
+                  <Image
+                    source={{ uri: selectedImage.image_url }}
+                    style={styles.modalImage}
+                    resizeMode="contain"
+                    onError={(error) => {
+                      Toast.show({
+                        type: 'error',
+                        text1: 'Error',
+                        text2: 'Failed to load image',
+                      });
+                    }}
+                    onLoad={() => {
+                    }}
+                  />
+                </TouchableOpacity>
                 <View style={styles.modalInfo}>
                   {/* Description Section */}
                   <View style={styles.modalDescriptionSection}>
@@ -845,6 +850,43 @@ export const GalleryScreen = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Fullscreen Image Modal */}
+      {selectedImage && (
+        <Modal
+          visible={showFullscreenImage}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setShowFullscreenImage(false)}>
+          <Pressable
+            style={styles.fullscreenOverlay}
+            onPress={() => setShowFullscreenImage(false)}>
+            <View
+              style={styles.fullscreenImageContainer}
+              onStartShouldSetResponder={() => true}
+              onResponderTerminationRequest={() => false}>
+              <TouchableOpacity
+                style={styles.fullscreenCloseButton}
+                onPress={() => setShowFullscreenImage(false)}
+                activeOpacity={0.7}>
+                <Icon name="times" size={24} color="#fff" />
+              </TouchableOpacity>
+              <Image
+                source={{ uri: selectedImage.image_url }}
+                style={styles.fullscreenImage}
+                resizeMode="contain"
+                onError={(error) => {
+                  Toast.show({
+                    type: 'error',
+                    text1: 'Error',
+                    text2: 'Failed to load image',
+                  });
+                }}
+              />
+            </View>
+          </Pressable>
+        </Modal>
+      )}
 
       {/* Floating Upload Button */}
       <TouchableOpacity
@@ -1330,5 +1372,34 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: '#fff',
     fontWeight: '600',
+  },
+  fullscreenOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.95)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  fullscreenImageContainer: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+    position: 'relative',
+  },
+  fullscreenImage: {
+    width: '100%',
+    height: '100%',
+  },
+  fullscreenCloseButton: {
+    position: 'absolute',
+    top: 50,
+    right: 20,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
   },
 });
