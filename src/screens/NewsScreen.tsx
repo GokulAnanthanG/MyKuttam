@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   Linking,
@@ -92,7 +93,8 @@ const formatAudioTime = (seconds: number): string => {
 };
 
 const getFullImageUrl = (url: string | undefined | null): string | undefined => {
-  if (!url) return undefined;
+  // Check if url exists and is a string
+  if (!url || typeof url !== 'string') return undefined;
   
   // If URL is already absolute, return as is
   if (url.startsWith('http://') || url.startsWith('https://')) {
@@ -118,6 +120,20 @@ const getFullImageUrl = (url: string | undefined | null): string | undefined => 
   return url;
 };
 
+// Normalize media_src to always return an array of strings
+const normalizeMediaSrc = (mediaSrc: string | string[] | undefined | null): string[] => {
+  if (!mediaSrc) return [];
+  if (Array.isArray(mediaSrc)) {
+    // Filter out any non-string values
+    return mediaSrc.filter((item): item is string => typeof item === 'string' && item.length > 0);
+  }
+  // Ensure it's a string before returning as array
+  if (typeof mediaSrc === 'string' && mediaSrc.length > 0) {
+    return [mediaSrc];
+  }
+  return [];
+};
+
 export const NewsScreen = () => {
   const { currentUser } = useAuth();
   const [highlightedNews, setHighlightedNews] = useState<News[]>([]);
@@ -129,6 +145,8 @@ export const NewsScreen = () => {
   const [hasMore, setHasMore] = useState(true);
   const [imageModalVisible, setImageModalVisible] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
+  const [selectedImageUrls, setSelectedImageUrls] = useState<string[]>([]);
+  const [selectedImageIndex, setSelectedImageIndex] = useState(0);
   const [isOnline, setIsOnline] = useState(true);
   
   // Comments bottom sheet
@@ -140,6 +158,11 @@ export const NewsScreen = () => {
   const [submittingComment, setSubmittingComment] = useState(false);
   const [commentsPage, setCommentsPage] = useState(1);
   const [hasMoreComments, setHasMoreComments] = useState(true);
+  // Comment edit/delete state
+  const [editingCommentId, setEditingCommentId] = useState<string | null>(null);
+  const [editCommentText, setEditCommentText] = useState('');
+  const [commentMenuVisible, setCommentMenuVisible] = useState<string | null>(null);
+  const [deletingCommentId, setDeletingCommentId] = useState<string | null>(null);
 
   // Read more/less state
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
@@ -158,6 +181,13 @@ export const NewsScreen = () => {
 
   // Video reveal state to lazy load players
   const [revealedVideos, setRevealedVideos] = useState<Set<string>>(new Set());
+
+  // Track current image index for each news item with multiple images
+  const [currentImageIndices, setCurrentImageIndices] = useState<Record<string, number>>({});
+  
+  // Ref for image modal ScrollView
+  const imageModalScrollRef = useRef<ScrollView>(null);
+  const isProgrammaticScrollRef = useRef(false);
 
   const stopAudioProgressInterval = useCallback(() => {
     if (audioProgressIntervalRef.current) {
@@ -205,6 +235,9 @@ export const NewsScreen = () => {
   // Highlight news detail modal state
   const [showHighlightModal, setShowHighlightModal] = useState(false);
   const [selectedHighlightNews, setSelectedHighlightNews] = useState<News | null>(null);
+  const [highlightModalImageIndex, setHighlightModalImageIndex] = useState(0);
+  const highlightModalScrollRef = useRef<ScrollView>(null);
+  const isHighlightProgrammaticScrollRef = useRef(false);
 
   // Create news modal state
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -213,8 +246,56 @@ export const NewsScreen = () => {
   const [createMediaType, setCreateMediaType] = useState<MediaType>('TEXT');
   const [createIsHighlighted, setCreateIsHighlighted] = useState(false);
   const [createExternalUrl, setCreateExternalUrl] = useState('');
-  const [selectedMedia, setSelectedMedia] = useState<{ uri: string; type: string; name: string; fileSize?: number } | null>(null);
+  const [selectedMedia, setSelectedMedia] = useState<{ uri: string; type: string; name: string; fileSize?: number } | { uri: string; type: string; name: string; fileSize?: number }[] | null>(null);
   const [creatingNews, setCreatingNews] = useState(false);
+
+  // Scroll to correct image when modal opens
+  useEffect(() => {
+    if (imageModalVisible && selectedImageUrls.length > 1 && imageModalScrollRef.current) {
+      const screenWidth = Dimensions.get('window').width;
+      isProgrammaticScrollRef.current = true;
+      setTimeout(() => {
+        imageModalScrollRef.current?.scrollTo({
+          x: selectedImageIndex * screenWidth,
+          animated: false,
+        });
+        // Reset flag after a short delay to allow scroll to complete
+        setTimeout(() => {
+          isProgrammaticScrollRef.current = false;
+        }, 200);
+      }, 100);
+    }
+  }, [imageModalVisible, selectedImageIndex, selectedImageUrls.length]);
+
+  // Reset image index when highlight news changes
+  useEffect(() => {
+    if (selectedHighlightNews) {
+      setHighlightModalImageIndex(0);
+    }
+  }, [selectedHighlightNews?.id]);
+
+  // Scroll to correct image when highlight modal opens
+  useEffect(() => {
+    if (showHighlightModal && selectedHighlightNews?.media_type === 'IMAGE') {
+      const imageUrls = normalizeMediaSrc(selectedHighlightNews.media_src);
+      if (imageUrls.length > 1 && highlightModalScrollRef.current) {
+        // Account for modal content padding (16px on each side = 32px total)
+        const screenWidth = Dimensions.get('window').width;
+        const containerWidth = screenWidth - 32;
+        isHighlightProgrammaticScrollRef.current = true;
+        setTimeout(() => {
+          highlightModalScrollRef.current?.scrollTo({
+            x: highlightModalImageIndex * containerWidth,
+            animated: false,
+          });
+          // Reset flag after a short delay to allow scroll to complete
+          setTimeout(() => {
+            isHighlightProgrammaticScrollRef.current = false;
+          }, 200);
+        }, 100);
+      }
+    }
+  }, [showHighlightModal, highlightModalImageIndex, selectedHighlightNews]);
 
   useEffect(() => {
     const finishedSub = SoundPlayer.addEventListener('FinishedPlaying', () => {
@@ -335,6 +416,13 @@ export const NewsScreen = () => {
     const isAdmin = userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
     const isHelper = userRole === 'HELPHER' && currentUser.account_type === 'MANAGEMENT';
     return isAdmin || isHelper;
+  };
+
+  // Check if user can add comments (admin/sub-admin only)
+  const canAddComment = () => {
+    if (!currentUser) return false;
+    const userRole = currentUser.role;
+    return userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
   };
 
   // Check like status for all news items
@@ -754,6 +842,103 @@ export const NewsScreen = () => {
     }
   };
 
+  const handleEditComment = async (commentId: string) => {
+    if (!editCommentText.trim()) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Comment cannot be empty',
+        visibilityTime: 2000,
+      });
+      return;
+    }
+
+    try {
+      setSubmittingComment(true);
+      const response = await NewsService.editComment(commentId, editCommentText.trim());
+
+      if (response.success) {
+        setEditingCommentId(null);
+        setEditCommentText('');
+        setCommentMenuVisible(null);
+        // Refresh comments
+        if (selectedNews) {
+          await fetchComments(selectedNews.id, 1, false);
+        }
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Comment updated successfully',
+          visibilityTime: 2000,
+        });
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to update comment',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setSubmittingComment(false);
+    }
+  };
+
+  const handleDeleteComment = async (commentId: string) => {
+    Alert.alert(
+      'Delete Comment',
+      'Are you sure you want to delete this comment?',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingCommentId(commentId);
+              const response = await NewsService.deleteComment(commentId);
+
+              if (response.success) {
+                setCommentMenuVisible(null);
+                // Refresh comments
+                if (selectedNews) {
+                  await fetchComments(selectedNews.id, 1, false);
+                  // Refresh news to update comment count
+                  await fetchFeaturedNews(1, false);
+                  await fetchHighlightedNews();
+                }
+                Toast.show({
+                  type: 'success',
+                  text1: 'Success',
+                  text2: 'Comment deleted successfully',
+                  visibilityTime: 2000,
+                });
+              }
+            } catch (error) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error instanceof Error ? error.message : 'Failed to delete comment',
+                visibilityTime: 3000,
+              });
+            } finally {
+              setDeletingCommentId(null);
+            }
+          },
+        },
+      ],
+    );
+  };
+
+  const startEditingComment = (comment: Comment) => {
+    setEditingCommentId(comment.id);
+    setEditCommentText(comment.comment);
+    setCommentMenuVisible(null);
+  };
+
   const toggleDescription = (newsId: string) => {
     setExpandedDescriptions((prev) => {
       const newSet = new Set(prev);
@@ -1013,6 +1198,7 @@ export const NewsScreen = () => {
       options.quality = 0.8;
       options.maxWidth = 1920;
       options.maxHeight = 1920;
+      options.selectionLimit = 0; // 0 means unlimited, allow multiple images
     } else if (createMediaType === 'VIDEO') {
       options.mediaType = 'video';
       options.videoQuality = 'high';
@@ -1033,34 +1219,66 @@ export const NewsScreen = () => {
         return;
       }
 
-      const asset = response.assets?.[0];
-      if (!asset) {
+      const assets = response.assets;
+      if (!assets || assets.length === 0) {
         return;
       }
 
       // Check file size (10MB = 10 * 1024 * 1024 bytes)
       const maxSize = 10 * 1024 * 1024;
-      if (asset.fileSize && asset.fileSize > maxSize) {
-        Toast.show({
-          type: 'error',
-          text1: 'File Too Large',
-          text2: 'File size must be less than 10MB',
-          visibilityTime: 3000,
-        });
+      const validAssets = assets.filter(asset => {
+        if (asset.fileSize && asset.fileSize > maxSize) {
+          Toast.show({
+            type: 'error',
+            text1: 'File Too Large',
+            text2: `${asset.fileName || 'File'} size must be less than 10MB`,
+            visibilityTime: 3000,
+          });
+          return false;
+        }
+        return true;
+      });
+
+      if (validAssets.length === 0) {
         return;
       }
 
-      if (asset.uri) {
-        const fileExtension = asset.uri.split('.').pop() || '';
-        const fileName = `media_${Date.now()}.${fileExtension}`;
-        const mimeType = asset.type || `application/octet-stream`;
+      // For IMAGE type, allow multiple images
+      if (createMediaType === 'IMAGE') {
+        const mediaFiles = validAssets.map((asset, index) => {
+          if (!asset.uri) return null;
+          const fileExtension = asset.uri.split('.').pop() || '';
+          const fileName = asset.fileName || `media_${Date.now()}_${index}.${fileExtension}`;
+          const mimeType = asset.type || `image/jpeg`;
+          return {
+            uri: asset.uri,
+            type: mimeType,
+            name: fileName,
+            fileSize: asset.fileSize,
+          };
+        }).filter(Boolean) as { uri: string; type: string; name: string; fileSize?: number }[];
 
-        setSelectedMedia({
-          uri: asset.uri,
-          type: mimeType,
-          name: fileName,
-          fileSize: asset.fileSize,
-        });
+        // If there are existing images, append new ones
+        if (Array.isArray(selectedMedia)) {
+          setSelectedMedia([...selectedMedia, ...mediaFiles]);
+        } else {
+          setSelectedMedia(mediaFiles.length === 1 ? mediaFiles[0] : mediaFiles);
+        }
+      } else {
+        // For VIDEO, only single selection
+        const asset = validAssets[0];
+        if (asset.uri) {
+          const fileExtension = asset.uri.split('.').pop() || '';
+          const fileName = asset.fileName || `media_${Date.now()}.${fileExtension}`;
+          const mimeType = asset.type || `application/octet-stream`;
+
+          setSelectedMedia({
+            uri: asset.uri,
+            type: mimeType,
+            name: fileName,
+            fileSize: asset.fileSize,
+          });
+        }
       }
     });
   };
@@ -1087,66 +1305,132 @@ export const NewsScreen = () => {
       return;
     }
 
+    // For IMAGE type, check if array is empty
+    if (createMediaType === 'IMAGE' && Array.isArray(selectedMedia) && selectedMedia.length === 0) {
+      Toast.show({
+        type: 'error',
+        text1: 'Validation Error',
+        text2: 'Please select at least one image',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+
     try {
       setCreatingNews(true);
 
-      // Prepare FormData
-      const formData = new FormData();
-      formData.append('title', createTitle.trim());
-      formData.append('media_type', createMediaType);
+      // For multiple images, we need to send them directly via FormData
+      // Check if we have multiple images
+      const hasMultipleImages = createMediaType === 'IMAGE' && Array.isArray(selectedMedia) && selectedMedia.length > 1;
       
-      if (createDescription.trim()) {
-        formData.append('description', createDescription.trim());
-      }
-      
-      formData.append('is_highlighted', String(createIsHighlighted));
-      
-      if (createExternalUrl.trim()) {
-        formData.append('external_url', createExternalUrl.trim());
-      }
-
-      // Append media file only if not TEXT type
-      if (createMediaType !== 'TEXT' && selectedMedia) {
-        formData.append('media', {
-          uri: selectedMedia.uri,
-          type: selectedMedia.type,
-          name: selectedMedia.name,
-        } as any);
-      }
-
-      const response = await NewsService.createNews({
-        title: createTitle.trim(),
-        media_type: createMediaType,
-        description: createDescription.trim() || undefined,
-        is_highlighted: createIsHighlighted,
-        external_url: createExternalUrl.trim() || undefined,
-        media: createMediaType !== 'TEXT' && selectedMedia ? {
-          uri: selectedMedia.uri,
-          type: selectedMedia.type,
-          name: selectedMedia.name,
-        } : undefined,
-      });
-
-      if (response.success) {
-        Toast.show({
-          type: 'success',
-          text1: 'Success',
-          text2: 'News created successfully',
-          visibilityTime: 2000,
-        });
+      if (hasMultipleImages) {
+        // Prepare FormData for multiple images
+        const formData = new FormData();
+        formData.append('title', createTitle.trim());
+        formData.append('media_type', createMediaType);
         
-        // Reset form
-        setCreateTitle('');
-        setCreateDescription('');
-        setCreateMediaType('TEXT');
-        setCreateIsHighlighted(false);
-        setCreateExternalUrl('');
-        setSelectedMedia(null);
-        setShowCreateModal(false);
+        if (createDescription.trim()) {
+          formData.append('description', createDescription.trim());
+        }
+        
+        formData.append('is_highlighted', String(createIsHighlighted));
+        
+        if (createExternalUrl.trim()) {
+          formData.append('external_url', createExternalUrl.trim());
+        }
 
-        // Refresh news
-        await fetchFeaturedNews(1, false);
-        await fetchHighlightedNews();
+        // Append all images
+        selectedMedia.forEach((media) => {
+          formData.append('media', {
+            uri: media.uri,
+            type: media.type,
+            name: media.name,
+          } as any);
+        });
+
+        // Send FormData directly using NewsService approach
+        const { endpoints } = await import('../config/api');
+        const { getStoredToken } = await import('../storage/userRealm');
+        const token = await getStoredToken();
+        const headers: Record<string, string> = {};
+        // For form data, don't set Content-Type - React Native will set it with boundary
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        const response = await fetch(endpoints.news, {
+          method: 'POST',
+          headers,
+          body: formData,
+        });
+
+        const text = await response.text();
+        const data = text ? JSON.parse(text) : { success: false, message: 'Empty response', data: {} };
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Failed to create news');
+        }
+
+        if (data.success) {
+          Toast.show({
+            type: 'success',
+            text1: 'Success',
+            text2: 'News created successfully',
+            visibilityTime: 2000,
+          });
+          
+          // Reset form
+          setCreateTitle('');
+          setCreateDescription('');
+          setCreateMediaType('TEXT');
+          setCreateIsHighlighted(false);
+          setCreateExternalUrl('');
+          setSelectedMedia(null);
+          setShowCreateModal(false);
+
+          // Refresh news
+          await fetchFeaturedNews(1, false);
+          await fetchHighlightedNews();
+        }
+      } else {
+        // Single media file or no media - use existing service
+        const response = await NewsService.createNews({
+          title: createTitle.trim(),
+          media_type: createMediaType,
+          description: createDescription.trim() || undefined,
+          is_highlighted: createIsHighlighted,
+          external_url: createExternalUrl.trim() || undefined,
+          media: createMediaType !== 'TEXT' && selectedMedia && !Array.isArray(selectedMedia) ? {
+            uri: selectedMedia.uri,
+            type: selectedMedia.type,
+            name: selectedMedia.name,
+          } : createMediaType === 'IMAGE' && Array.isArray(selectedMedia) && selectedMedia.length === 1 ? {
+            uri: selectedMedia[0].uri,
+            type: selectedMedia[0].type,
+            name: selectedMedia[0].name,
+          } : undefined,
+        });
+
+        if (response.success) {
+          Toast.show({
+            type: 'success',
+            text1: 'Success',
+            text2: 'News created successfully',
+            visibilityTime: 2000,
+          });
+          
+          // Reset form
+          setCreateTitle('');
+          setCreateDescription('');
+          setCreateMediaType('TEXT');
+          setCreateIsHighlighted(false);
+          setCreateExternalUrl('');
+          setSelectedMedia(null);
+          setShowCreateModal(false);
+
+          // Refresh news
+          await fetchFeaturedNews(1, false);
+          await fetchHighlightedNews();
+        }
       }
     } catch (error) {
       Toast.show({
@@ -1198,6 +1482,7 @@ export const NewsScreen = () => {
     }
     setShowHighlightModal(false);
     setSelectedHighlightNews(null);
+    setHighlightModalImageIndex(0);
   }, [currentAudioId, selectedHighlightNews, stopAudioPlayback]);
 
   const generateNewsDeepLink = (newsId: string): string => {
@@ -1451,25 +1736,32 @@ export const NewsScreen = () => {
           android_ripple={{ color: colors.primary + '20' }}>
           <View style={styles.highlightCardInner}>
             {/* Background image/content */}
-            {item.media_type === 'IMAGE' && item.media_src ? (
-              <TouchableOpacity
-                activeOpacity={0.9}
-                onPress={(e) => {
-                  e.stopPropagation();
-                  const fullImageUrl = getFullImageUrl(item.media_src);
-                  setSelectedImageUri(fullImageUrl || item.media_src || null);
-                  setImageModalVisible(true);
-                }}
-                style={styles.highlightImageTouchable}>
-                <Image 
-                  source={{ uri: getFullImageUrl(item.media_src) || item.media_src || '' }} 
-                  style={styles.highlightBackgroundImage} 
-                  resizeMode="cover"
-                  onError={(error) => {
+            {item.media_type === 'IMAGE' && item.media_src ? (() => {
+              const imageUrls = normalizeMediaSrc(item.media_src);
+              const firstImageUrl = imageUrls.length > 0 ? imageUrls[0] : '';
+              return (
+                <TouchableOpacity
+                  activeOpacity={0.9}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    if (imageUrls.length > 0) {
+                      setSelectedImageUri(imageUrls[0]);
+                      setSelectedImageUrls(imageUrls);
+                      setSelectedImageIndex(0);
+                      setImageModalVisible(true);
+                    }
                   }}
-                />
-              </TouchableOpacity>
-            ) : item.media_type === 'VIDEO' ? (
+                  style={styles.highlightImageTouchable}>
+                  <Image 
+                    source={{ uri: getFullImageUrl(firstImageUrl) || firstImageUrl || '' }} 
+                    style={styles.highlightBackgroundImage} 
+                    resizeMode="cover"
+                    onError={(error) => {
+                    }}
+                  />
+                </TouchableOpacity>
+              );
+            })() : item.media_type === 'VIDEO' ? (
               <View style={[styles.highlightBackgroundImage, styles.highlightVideoPlaceholder]}>
                 <Icon name="play" size={40} color="#fff" />
                 <Text style={styles.highlightVideoText}>Video</Text>
@@ -1633,17 +1925,99 @@ export const NewsScreen = () => {
           </View>
         )}
 
-        {item.media_src && item.media_type === 'IMAGE' && (
-          <TouchableOpacity
-            activeOpacity={0.9}
-            onPress={(e) => {
-              e.stopPropagation();
-                  setSelectedImageUri(item.media_src || null);
-              setImageModalVisible(true);
-            }}>
-            <Image source={{ uri: item.media_src }} style={styles.featuredImage} resizeMode="cover" />
-          </TouchableOpacity>
-        )}
+        {item.media_src && item.media_type === 'IMAGE' && (() => {
+          const imageUrls = normalizeMediaSrc(item.media_src);
+          if (imageUrls.length === 0) return null;
+          
+          if (imageUrls.length === 1) {
+            // Single image
+            return (
+              <TouchableOpacity
+                activeOpacity={0.9}
+                onPress={(e) => {
+                  e.stopPropagation();
+                  setSelectedImageUri(imageUrls[0]);
+                  setSelectedImageUrls(imageUrls);
+                  setSelectedImageIndex(0);
+                  setImageModalVisible(true);
+                }}>
+                <Image 
+                  source={{ uri: getFullImageUrl(imageUrls[0]) || imageUrls[0] || '' }} 
+                  style={styles.featuredImage} 
+                  resizeMode="cover" 
+                />
+              </TouchableOpacity>
+            );
+          } else {
+            // Multiple images - horizontal scrolling
+            const currentIndex = currentImageIndices[item.id] || 0;
+            const screenWidth = Dimensions.get('window').width;
+            const cardMargin = 32; // marginHorizontal: 16 * 2
+            const cardPadding = 32; // padding: 16 * 2
+            const imageWidth = screenWidth - cardMargin - cardPadding;
+
+            const handleScroll = (event: any) => {
+              const scrollPosition = event.nativeEvent.contentOffset.x;
+              const index = Math.round(scrollPosition / imageWidth);
+              if (index !== currentIndex && index >= 0 && index < imageUrls.length) {
+                setCurrentImageIndices(prev => ({
+                  ...prev,
+                  [item.id]: index,
+                }));
+              }
+            };
+
+            return (
+              <View style={styles.multipleImagesContainer}>
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  pagingEnabled
+                  onScroll={handleScroll}
+                  scrollEventThrottle={16}
+                  style={styles.horizontalImagesScroll}
+                  contentContainerStyle={styles.horizontalImagesScrollContent}>
+                  {imageUrls.map((imageUrl, index) => (
+                    <TouchableOpacity
+                      key={index}
+                      activeOpacity={0.9}
+                      onPress={(e) => {
+                        e.stopPropagation();
+                        setSelectedImageUri(imageUrl);
+                        setSelectedImageUrls(imageUrls);
+                        setSelectedImageIndex(index);
+                        setImageModalVisible(true);
+                      }}
+                      style={styles.horizontalImageItem}>
+                      <Image 
+                        source={{ uri: getFullImageUrl(imageUrl) || imageUrl || '' }} 
+                        style={styles.horizontalImage} 
+                        resizeMode="cover" 
+                      />
+                      <View style={styles.imagePositionOverlay}>
+                        <Text style={styles.imagePositionText}>
+                          {index + 1}/{imageUrls.length}
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  ))}
+                </ScrollView>
+                {/* Scroll indicators (dots) */}
+                <View style={styles.scrollIndicators}>
+                  {imageUrls.map((_, index) => (
+                    <View
+                      key={index}
+                      style={[
+                        styles.scrollIndicatorDot,
+                        index === currentIndex && styles.scrollIndicatorDotActive,
+                      ]}
+                    />
+                  ))}
+                </View>
+              </View>
+            );
+          }
+        })()}
 
         {item.media_src && item.media_type === 'VIDEO' && (
           <View style={styles.videoContainer}>
@@ -1849,26 +2223,117 @@ export const NewsScreen = () => {
     );
   };
 
-  const renderComment = ({ item }: { item: Comment }) => (
-    <View style={styles.commentItem}>
-      <View style={styles.commentHeader}>
-        {item.user_id.avatar ? (
-          <Image source={{ uri: item.user_id.avatar }} style={styles.commentAvatar} />
-        ) : (
-          <View style={styles.commentAvatar}>
-            <Text style={styles.commentAvatarText}>
-              {item.user_id.name?.charAt(0).toUpperCase() || 'U'}
-            </Text>
+  const renderComment = ({ item }: { item: Comment }) => {
+    const isOwnComment = currentUser && item.user_id.id === currentUser.id;
+    const isEditing = editingCommentId === item.id;
+    const isDeleting = deletingCommentId === item.id;
+
+    return (
+      <View style={styles.commentItem}>
+        <View style={styles.commentHeader}>
+          {item.user_id.avatar ? (
+            <Image source={{ uri: item.user_id.avatar }} style={styles.commentAvatar} />
+          ) : (
+            <View style={styles.commentAvatar}>
+              <Text style={styles.commentAvatarText}>
+                {item.user_id.name?.charAt(0).toUpperCase() || 'U'}
+              </Text>
+            </View>
+          )}
+          <View style={styles.commentContent}>
+            <View style={styles.commentHeaderRow}>
+              <Text style={styles.commentAuthor}>{item.user_id.name || 'Anonymous'}</Text>
+              {isOwnComment && !isEditing && (
+                <TouchableOpacity
+                  style={styles.commentMenuButton}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    setCommentMenuVisible(commentMenuVisible === item.id ? null : item.id);
+                  }}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  <Icon name="ellipsis-v" size={16} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+            {isEditing ? (
+              <View style={styles.commentEditContainer}>
+                <TextInput
+                  style={styles.commentEditInput}
+                  value={editCommentText}
+                  onChangeText={setEditCommentText}
+                  multiline
+                  maxLength={500}
+                  placeholderTextColor={colors.textMuted}
+                />
+                <View style={styles.commentEditActions}>
+                  <TouchableOpacity
+                    style={styles.commentEditCancelButton}
+                    onPress={() => {
+                      setEditingCommentId(null);
+                      setEditCommentText('');
+                    }}
+                    disabled={submittingComment}>
+                    <Text style={styles.commentEditCancelText}>Cancel</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    style={[
+                      styles.commentEditSaveButton,
+                      (!editCommentText.trim() || submittingComment) && styles.commentEditSaveButtonDisabled,
+                    ]}
+                    onPress={() => handleEditComment(item.id)}
+                    disabled={!editCommentText.trim() || submittingComment}>
+                    {submittingComment ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.commentEditSaveText}>Save</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+            ) : (
+              <>
+                <Text style={styles.commentText}>{item.comment}</Text>
+                <Text style={styles.commentTime}>{formatTimeAgo(item.createdAt)}</Text>
+              </>
+            )}
           </View>
-        )}
-        <View style={styles.commentContent}>
-          <Text style={styles.commentAuthor}>{item.user_id.name || 'Anonymous'}</Text>
-          <Text style={styles.commentText}>{item.comment}</Text>
-          <Text style={styles.commentTime}>{formatTimeAgo(item.createdAt)}</Text>
         </View>
+        {isOwnComment && commentMenuVisible === item.id && !isEditing && (
+          <Pressable
+            onPress={(e) => e.stopPropagation()}
+            style={styles.commentMenu}>
+            <TouchableOpacity
+              style={styles.commentMenuItem}
+              onPress={(e) => {
+                e.stopPropagation();
+                startEditingComment(item);
+              }}
+              disabled={isDeleting}>
+              <Icon name="edit" size={16} color={colors.text} />
+              <Text style={styles.commentMenuItemText}>Edit</Text>
+            </TouchableOpacity>
+            <View style={styles.commentMenuDivider} />
+            <TouchableOpacity
+              style={[styles.commentMenuItem, styles.commentMenuItemDanger]}
+              onPress={(e) => {
+                e.stopPropagation();
+                handleDeleteComment(item.id);
+              }}
+              disabled={isDeleting}>
+              {isDeleting ? (
+                <ActivityIndicator size="small" color={colors.danger} />
+              ) : (
+                <Icon name="trash" size={16} color={colors.danger} />
+              )}
+              <Text style={[styles.commentMenuItemText, styles.commentMenuItemTextDanger]}>
+                Delete
+              </Text>
+            </TouchableOpacity>
+          </Pressable>
+        )}
       </View>
-    </View>
-  );
+    );
+  };
 
   const renderFooter = () => {
     if (!loadingMore) return null;
@@ -1938,12 +2403,27 @@ export const NewsScreen = () => {
             backgroundColor: 'rgba(0, 0, 0, 0.5)',
           },
         }}
-        onClose={() => setSelectedNews(null)}>
+        onClose={() => {
+          setSelectedNews(null);
+          setCommentMenuVisible(null);
+          setEditingCommentId(null);
+          setEditCommentText('');
+        }}>
         <View style={styles.bottomSheetContent}>
           <View style={styles.bottomSheetHeader}>
             <Text style={styles.bottomSheetTitle}>
               Comments ({selectedNews?.noOfComments || 0})
             </Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (bottomSheetRef.current) {
+                  bottomSheetRef.current.close();
+                }
+              }}
+              style={styles.bottomSheetCloseButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Icon name="times" size={20} color={colors.text} />
+            </TouchableOpacity>
           </View>
 
           {loadingComments && comments.length === 0 ? (
@@ -1951,60 +2431,66 @@ export const NewsScreen = () => {
               <ActivityIndicator size="large" color={colors.primary} />
             </View>
           ) : (
-            <FlatList
-              data={comments}
-              keyExtractor={(item: Comment) => item.id}
-              renderItem={renderComment}
-              contentContainerStyle={styles.commentsList}
-              style={styles.commentsFlatList}
-              onEndReached={() => {
-                if (!loadingComments && hasMoreComments && selectedNews) {
-                  fetchComments(selectedNews.id, commentsPage + 1, true);
+            <Pressable
+              onPress={() => setCommentMenuVisible(null)}
+              style={{ flex: 1 }}>
+              <FlatList
+                data={comments}
+                keyExtractor={(item: Comment) => item.id}
+                renderItem={renderComment}
+                contentContainerStyle={styles.commentsList}
+                style={styles.commentsFlatList}
+                onEndReached={() => {
+                  if (!loadingComments && hasMoreComments && selectedNews) {
+                    fetchComments(selectedNews.id, commentsPage + 1, true);
+                  }
+                }}
+                ListFooterComponent={
+                  loadingComments && comments.length > 0 ? (
+                    <View style={styles.commentsLoading}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    </View>
+                  ) : null
                 }
-              }}
-              ListFooterComponent={
-                loadingComments && comments.length > 0 ? (
-                  <View style={styles.commentsLoading}>
-                    <ActivityIndicator size="small" color={colors.primary} />
+                ListEmptyComponent={
+                  <View style={styles.emptyComments}>
+                    <Text style={styles.emptyCommentsText}>No comments yet</Text>
+                    <Text style={styles.emptyCommentsSubtext}>Be the first to comment!</Text>
                   </View>
-                ) : null
-              }
-              ListEmptyComponent={
-                <View style={styles.emptyComments}>
-                  <Text style={styles.emptyCommentsText}>No comments yet</Text>
-                  <Text style={styles.emptyCommentsSubtext}>Be the first to comment!</Text>
-                </View>
-              }
-            />
+                }
+              />
+            </Pressable>
           )}
 
-          <View style={styles.commentInputContainer}>
-            <View style={styles.commentInputWrapper}>
-              <TextInput
-                style={styles.commentInput}
-                placeholder="Add a comment..."
-                placeholderTextColor={colors.textMuted}
-                value={commentText}
-                onChangeText={setCommentText}
-                multiline
-                maxLength={500}
-              />
-              <TouchableOpacity
-                style={[
-                  styles.sendButton,
-                  (!commentText.trim() || submittingComment) && styles.sendButtonDisabled,
-                ]}
-                onPress={handleSubmitComment}
-                disabled={!commentText.trim() || submittingComment}
-                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
-                {submittingComment ? (
-                  <ActivityIndicator size="small" color="#fff" />
-                ) : (
-                  <Icon name="send" size={18} color="#fff" />
-                )}
-              </TouchableOpacity>
+          {canAddComment() && (
+            <View style={styles.commentInputContainer}>
+              <View style={styles.commentInputWrapper}>
+                <TextInput
+                  style={styles.commentInput}
+                  placeholder="Add a comment..."
+                  placeholderTextColor={colors.textMuted}
+                  value={commentText}
+                  onChangeText={setCommentText}
+                  multiline
+                  maxLength={500}
+                />
+                <TouchableOpacity
+                  style={[
+                    styles.sendButton,
+                    (!commentText.trim() || submittingComment) && styles.sendButtonDisabled,
+                  ]}
+                  onPress={handleSubmitComment}
+                  disabled={!commentText.trim() || submittingComment}
+                  hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+                  {submittingComment ? (
+                    <ActivityIndicator size="small" color="#fff" />
+                  ) : (
+                    <Icon name="send" size={18} color="#fff" />
+                  )}
+                </TouchableOpacity>
+              </View>
             </View>
-          </View>
+          )}
         </View>
       </RBSheet>
 
@@ -2142,15 +2628,133 @@ export const NewsScreen = () => {
             </View>
 
             <ScrollView style={styles.highlightModalContent}>
-              {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'IMAGE' && (
-                <Image
-                  source={{ uri: getFullImageUrl(selectedHighlightNews.media_src) || selectedHighlightNews.media_src }}
-                  style={styles.highlightModalImage}
-                  resizeMode="cover"
-                  onError={(error) => {
-                  }}
-                />
-              )}
+              {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'IMAGE' && (() => {
+                const imageUrls = normalizeMediaSrc(selectedHighlightNews.media_src);
+                if (imageUrls.length === 0) return null;
+                
+                if (imageUrls.length === 1) {
+                  // Single image
+                  return (
+                    <View style={styles.highlightModalImageContainer}>
+                      <TouchableOpacity
+                        activeOpacity={0.9}
+                        onPress={() => {
+                          setSelectedImageUri(imageUrls[0]);
+                          setSelectedImageUrls(imageUrls);
+                          setSelectedImageIndex(0);
+                          setImageModalVisible(true);
+                        }}>
+                        <Image
+                          source={{ uri: getFullImageUrl(imageUrls[0]) || imageUrls[0] || '' }}
+                          style={styles.highlightModalImage}
+                          resizeMode="cover"
+                          onError={(error) => {
+                          }}
+                        />
+                      </TouchableOpacity>
+                    </View>
+                  );
+                } else {
+                  // Multiple images - swipeable view
+                  return (
+                    <View style={styles.highlightModalImageContainer}>
+                      <ScrollView
+                        ref={highlightModalScrollRef}
+                        horizontal
+                        pagingEnabled
+                        showsHorizontalScrollIndicator={false}
+                        onScroll={(event) => {
+                          // Only update if it's a user-initiated scroll, not programmatic
+                          if (isHighlightProgrammaticScrollRef.current) return;
+                          
+                          const scrollPosition = event.nativeEvent.contentOffset.x;
+                          // Account for modal content padding (16px on each side = 32px total)
+                          const screenWidth = Dimensions.get('window').width;
+                          const containerWidth = screenWidth - 32;
+                          const index = Math.round(scrollPosition / containerWidth);
+                          if (index >= 0 && index < imageUrls.length && index !== highlightModalImageIndex) {
+                            setHighlightModalImageIndex(index);
+                          }
+                        }}
+                        onMomentumScrollEnd={() => {
+                          // Reset flag after scroll ends
+                          isHighlightProgrammaticScrollRef.current = false;
+                        }}
+                        scrollEventThrottle={16}
+                        style={styles.highlightModalImageScrollView}
+                        contentContainerStyle={styles.highlightModalImageScrollContent}>
+                        {imageUrls.map((imageUrl, index) => (
+                          <TouchableOpacity
+                            key={index}
+                            activeOpacity={0.9}
+                            onPress={() => {
+                              setSelectedImageUri(imageUrl);
+                              setSelectedImageUrls(imageUrls);
+                              setSelectedImageIndex(index);
+                              setImageModalVisible(true);
+                            }}>
+                            <Image
+                              source={{ uri: getFullImageUrl(imageUrl) || imageUrl || '' }}
+                              style={styles.highlightModalImage}
+                              resizeMode="cover"
+                              onError={(error) => {
+                              }}
+                            />
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                      
+                      {/* Navigation arrows */}
+                      {highlightModalImageIndex > 0 && (
+                        <TouchableOpacity
+                          style={[styles.highlightModalNavButton, styles.highlightModalNavButtonLeft]}
+                          onPress={() => {
+                            const newIndex = highlightModalImageIndex - 1;
+                            // Account for modal content padding (16px on each side = 32px total)
+                            const screenWidth = Dimensions.get('window').width;
+                            const containerWidth = screenWidth - 32;
+                            isHighlightProgrammaticScrollRef.current = true;
+                            setHighlightModalImageIndex(newIndex);
+                            highlightModalScrollRef.current?.scrollTo({
+                              x: newIndex * containerWidth,
+                              animated: true,
+                            });
+                          }}
+                          activeOpacity={0.8}>
+                          <Icon name="chevron-left" size={20} color="#fff" />
+                        </TouchableOpacity>
+                      )}
+                      
+                      {highlightModalImageIndex < imageUrls.length - 1 && (
+                        <TouchableOpacity
+                          style={[styles.highlightModalNavButton, styles.highlightModalNavButtonRight]}
+                          onPress={() => {
+                            const newIndex = highlightModalImageIndex + 1;
+                            // Account for modal content padding (16px on each side = 32px total)
+                            const screenWidth = Dimensions.get('window').width;
+                            const containerWidth = screenWidth - 32;
+                            isHighlightProgrammaticScrollRef.current = true;
+                            setHighlightModalImageIndex(newIndex);
+                            highlightModalScrollRef.current?.scrollTo({
+                              x: newIndex * containerWidth,
+                              animated: true,
+                            });
+                          }}
+                          activeOpacity={0.8}>
+                          <Icon name="chevron-right" size={20} color="#fff" />
+                        </TouchableOpacity>
+                      )}
+                      
+                      {/* Image counter */}
+                      <View style={styles.highlightModalImageCounter}>
+                        <Text style={styles.highlightModalImageCounterText}>
+                          {highlightModalImageIndex + 1} / {imageUrls.length}
+                        </Text>
+                      </View>
+                    </View>
+                  );
+                }
+              })()}
 
               {selectedHighlightNews?.media_src && selectedHighlightNews.media_type === 'VIDEO' && (
                 <View style={styles.modalVideoContainer}>
@@ -2408,40 +3012,75 @@ export const NewsScreen = () => {
 
               {createMediaType !== 'TEXT' && (
                 <View style={styles.createFormGroup}>
-                  <Text style={styles.createLabel}>Media File * (Max 10MB)</Text>
+                  <Text style={styles.createLabel}>
+                    Media File * (Max 10MB){createMediaType === 'IMAGE' ? ' - Select multiple images' : ''}
+                  </Text>
                   <TouchableOpacity
                     style={styles.mediaSelectButton}
                     onPress={handleSelectMedia}>
                     <Icon name="upload" size={20} color={colors.primary} />
                     <Text style={styles.mediaSelectButtonText}>
-                      {selectedMedia ? 'Change Media' : 'Select Media'}
+                      {selectedMedia ? (createMediaType === 'IMAGE' && Array.isArray(selectedMedia) ? `Add More Images (${selectedMedia.length})` : 'Change Media') : 'Select Media'}
                     </Text>
                   </TouchableOpacity>
-                  {selectedMedia && (
-                    <View style={styles.selectedMediaContainer}>
-                      <Icon
-                        name={createMediaType === 'IMAGE' ? 'image' : createMediaType === 'VIDEO' ? 'video-camera' : 'music'}
-                        size={16}
-                        color={colors.primary}
-                      />
-                      <Text style={styles.selectedMediaText} numberOfLines={1}>
-                        {selectedMedia.name}
+                  
+                  {createMediaType === 'IMAGE' && Array.isArray(selectedMedia) ? (
+                    <>
+                      <ScrollView 
+                        horizontal 
+                        showsHorizontalScrollIndicator={false}
+                        style={styles.selectedImagesScroll}
+                        contentContainerStyle={styles.selectedImagesScrollContent}>
+                        {selectedMedia.map((media, index) => (
+                          <View key={index} style={styles.selectedImageItem}>
+                            <Image source={{ uri: media.uri }} style={styles.selectedImagePreview} />
+                            <TouchableOpacity
+                              onPress={() => {
+                                const newMedia = selectedMedia.filter((_, i) => i !== index);
+                                setSelectedMedia(newMedia.length === 0 ? null : newMedia.length === 1 ? newMedia[0] : newMedia);
+                              }}
+                              style={styles.removeImageButton}>
+                              <Icon name="times" size={14} color="#fff" />
+                            </TouchableOpacity>
+                            {media.fileSize && (
+                              <Text style={styles.selectedImageSize}>
+                                {(media.fileSize / (1024 * 1024)).toFixed(2)} MB
+                              </Text>
+                            )}
+                          </View>
+                        ))}
+                      </ScrollView>
+                      <Text style={styles.selectedImagesCount}>
+                        {selectedMedia.length} image{selectedMedia.length !== 1 ? 's' : ''} selected
                       </Text>
-                      {selectedMedia.fileSize && (
-                        <Text style={styles.selectedMediaSize}>
-                          ({(selectedMedia.fileSize / (1024 * 1024)).toFixed(2)} MB)
+                    </>
+                  ) : selectedMedia && !Array.isArray(selectedMedia) ? (
+                    <>
+                      <View style={styles.selectedMediaContainer}>
+                        <Icon
+                          name={createMediaType === 'IMAGE' ? 'image' : createMediaType === 'VIDEO' ? 'video-camera' : 'music'}
+                          size={16}
+                          color={colors.primary}
+                        />
+                        <Text style={styles.selectedMediaText} numberOfLines={1}>
+                          {selectedMedia.name}
                         </Text>
+                        {selectedMedia.fileSize && (
+                          <Text style={styles.selectedMediaSize}>
+                            ({(selectedMedia.fileSize / (1024 * 1024)).toFixed(2)} MB)
+                          </Text>
+                        )}
+                        <TouchableOpacity
+                          onPress={() => setSelectedMedia(null)}
+                          style={styles.removeMediaButton}>
+                          <Icon name="times" size={14} color={colors.danger} />
+                        </TouchableOpacity>
+                      </View>
+                      {createMediaType === 'IMAGE' && (
+                        <Image source={{ uri: selectedMedia.uri }} style={styles.selectedMediaPreview} />
                       )}
-                      <TouchableOpacity
-                        onPress={() => setSelectedMedia(null)}
-                        style={styles.removeMediaButton}>
-                        <Icon name="times" size={14} color={colors.danger} />
-                      </TouchableOpacity>
-                    </View>
-                  )}
-                  {selectedMedia && createMediaType === 'IMAGE' && (
-                    <Image source={{ uri: selectedMedia.uri }} style={styles.selectedMediaPreview} />
-                  )}
+                    </>
+                  ) : null}
                 </View>
               )}
 
@@ -2517,12 +3156,99 @@ export const NewsScreen = () => {
             activeOpacity={0.8}>
             <Icon name="times" size={24} color="#fff" />
           </TouchableOpacity>
-          {selectedImageUri && (
-            <Image
-              source={{ uri: selectedImageUri }}
-              style={styles.imageModalImage}
-              resizeMode="contain"
-            />
+          
+          {selectedImageUrls.length > 1 ? (
+            // Multiple images - swipeable view
+            <>
+              <ScrollView
+                ref={imageModalScrollRef}
+                horizontal
+                pagingEnabled
+                showsHorizontalScrollIndicator={false}
+                onScroll={(event) => {
+                  // Only update if it's a user-initiated scroll, not programmatic
+                  if (isProgrammaticScrollRef.current) return;
+                  
+                  const scrollPosition = event.nativeEvent.contentOffset.x;
+                  const screenWidth = Dimensions.get('window').width;
+                  const index = Math.round(scrollPosition / screenWidth);
+                  if (index >= 0 && index < selectedImageUrls.length && index !== selectedImageIndex) {
+                    setSelectedImageIndex(index);
+                    setSelectedImageUri(selectedImageUrls[index]);
+                  }
+                }}
+                onMomentumScrollEnd={() => {
+                  // Reset flag after scroll ends
+                  isProgrammaticScrollRef.current = false;
+                }}
+                scrollEventThrottle={16}
+                style={styles.imageModalScrollView}
+                contentContainerStyle={styles.imageModalScrollContent}>
+                {selectedImageUrls.map((imageUrl, index) => (
+                  <Image
+                    key={index}
+                    source={{ uri: getFullImageUrl(imageUrl) || imageUrl }}
+                    style={styles.imageModalImage}
+                    resizeMode="contain"
+                  />
+                ))}
+              </ScrollView>
+              
+              {/* Navigation arrows */}
+              {selectedImageIndex > 0 && (
+                <TouchableOpacity
+                  style={[styles.imageModalNavButton, styles.imageModalNavButtonLeft]}
+                  onPress={() => {
+                    const newIndex = selectedImageIndex - 1;
+                    const screenWidth = Dimensions.get('window').width;
+                    isProgrammaticScrollRef.current = true;
+                    setSelectedImageIndex(newIndex);
+                    setSelectedImageUri(selectedImageUrls[newIndex]);
+                    imageModalScrollRef.current?.scrollTo({
+                      x: newIndex * screenWidth,
+                      animated: true,
+                    });
+                  }}
+                  activeOpacity={0.8}>
+                  <Icon name="chevron-left" size={24} color="#fff" />
+                </TouchableOpacity>
+              )}
+              
+              {selectedImageIndex < selectedImageUrls.length - 1 && (
+                <TouchableOpacity
+                  style={[styles.imageModalNavButton, styles.imageModalNavButtonRight]}
+                  onPress={() => {
+                    const newIndex = selectedImageIndex + 1;
+                    const screenWidth = Dimensions.get('window').width;
+                    isProgrammaticScrollRef.current = true;
+                    setSelectedImageIndex(newIndex);
+                    setSelectedImageUri(selectedImageUrls[newIndex]);
+                    imageModalScrollRef.current?.scrollTo({
+                      x: newIndex * screenWidth,
+                      animated: true,
+                    });
+                  }}
+                  activeOpacity={0.8}>
+                  <Icon name="chevron-right" size={24} color="#fff" />
+                </TouchableOpacity>
+              )}
+              
+              {/* Image counter */}
+              <View style={styles.imageModalCounter}>
+                <Text style={styles.imageModalCounterText}>
+                  {selectedImageIndex + 1} / {selectedImageUrls.length}
+                </Text>
+              </View>
+            </>
+          ) : (
+            // Single image
+            selectedImageUri && (
+              <Image
+                source={{ uri: getFullImageUrl(selectedImageUri) || selectedImageUri }}
+                style={styles.imageModalImage}
+                resizeMode="contain"
+              />
+            )
           )}
         </View>
       </Modal>
@@ -2765,11 +3491,139 @@ const styles = StyleSheet.create({
     lineHeight: 20,
     marginBottom: 12,
   },
+  featuredImageContainer: {
+    width: Dimensions.get('window').width - 32,
+    position: 'relative',
+  },
+  featuredImagesScroll: {
+    width: '100%',
+    marginBottom: 12,
+  },
+  featuredImagesScrollContent: {
+    paddingHorizontal: 0,
+  },
+  multipleImagesContainer: {
+    marginBottom: 12,
+  },
+  horizontalImagesScroll: {
+    width: '100%',
+  },
+  horizontalImagesScrollContent: {
+    paddingRight: 0,
+  },
+  horizontalImageItem: {
+    width: Dimensions.get('window').width - 64, // Account for card padding (16*2) + margin (16*2)
+    height: 200,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: colors.cardMuted,
+  },
+  horizontalImage: {
+    width: '100%',
+    height: '100%',
+    resizeMode: 'cover',
+  },
+  imagePositionOverlay: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  imagePositionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: fonts.body,
+  },
+  scrollIndicators: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 6,
+    marginTop: 8,
+  },
+  scrollIndicatorDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.textMuted,
+    opacity: 0.4,
+  },
+  scrollIndicatorDotActive: {
+    backgroundColor: colors.primary,
+    opacity: 1,
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+  },
+  mainImageContainer: {
+    width: '100%',
+    position: 'relative',
+    marginBottom: 8,
+  },
+  imageCountOverlay: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 16,
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+  },
+  imageCountText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: fonts.body,
+  },
+  thumbnailScroll: {
+    width: '100%',
+    maxHeight: 80,
+  },
+  thumbnailScrollContent: {
+    gap: 8,
+    paddingRight: 16,
+  },
+  thumbnailContainer: {
+    width: 80,
+    height: 80,
+    borderRadius: 8,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: colors.cardMuted,
+    borderWidth: 2,
+    borderColor: 'transparent',
+  },
+  thumbnailImage: {
+    width: '100%',
+    height: '100%',
+  },
+  moreImagesThumbnail: {
+    width: '100%',
+    height: '100%',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 4,
+  },
+  moreImagesText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: fonts.body,
+  },
   featuredImage: {
     width: '100%',
     height: 200,
     borderRadius: 8,
-    marginBottom: 12,
+    marginBottom: 0,
     backgroundColor: colors.cardMuted,
   },
   videoContainer: {
@@ -2913,6 +3767,9 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   bottomSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
     paddingHorizontal: 16,
     paddingTop: 8,
     paddingBottom: 16,
@@ -2920,10 +3777,16 @@ const styles = StyleSheet.create({
     borderBottomColor: colors.border,
   },
   bottomSheetTitle: {
+    flex: 1,
     fontFamily: fonts.heading,
     fontSize: 20,
     fontWeight: '600',
     color: colors.text,
+  },
+  bottomSheetCloseButton: {
+    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   commentsList: {
     paddingHorizontal: 16,
@@ -2980,6 +3843,106 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 12,
     color: colors.textMuted,
+  },
+  commentHeaderRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  commentMenuButton: {
+    padding: 4,
+    marginLeft: 8,
+  },
+  commentMenu: {
+    marginTop: 8,
+    marginLeft: 48,
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    overflow: 'hidden',
+  },
+  commentMenuItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 12,
+  },
+  commentMenuItemText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  commentMenuItemDanger: {
+    // Additional styling for danger items if needed
+  },
+  commentMenuItemTextDanger: {
+    color: colors.danger,
+  },
+  commentMenuDivider: {
+    height: 1,
+    backgroundColor: colors.border,
+  },
+  commentEditContainer: {
+    marginTop: 8,
+  },
+  commentEditInput: {
+    backgroundColor: colors.background,
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minHeight: 80,
+    maxHeight: 120,
+    textAlignVertical: 'top',
+    marginBottom: 8,
+  },
+  commentEditActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: 8,
+  },
+  commentEditCancelButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+  },
+  commentEditCancelText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  commentEditSaveButton: {
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+    minWidth: 80,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  commentEditSaveButtonDisabled: {
+    opacity: 0.5,
+  },
+  commentEditSaveText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
   },
   emptyComments: {
     paddingVertical: 40,
@@ -3239,12 +4202,57 @@ const styles = StyleSheet.create({
   highlightModalContent: {
     padding: 16,
   },
-  highlightModalImage: {
+  highlightModalImageContainer: {
+    position: 'relative',
     width: '100%',
+    marginBottom: 16,
+    overflow: 'hidden',
+  },
+  highlightModalImageScrollView: {
+    width: '100%',
+  },
+  highlightModalImageScrollContent: {
+    alignItems: 'center',
+  },
+  highlightModalImage: {
+    width: Dimensions.get('window').width - 32, // Account for modal content padding (16px on each side)
     height: 250,
     borderRadius: 12,
-    marginBottom: 16,
     backgroundColor: colors.cardMuted,
+  },
+  highlightModalNavButton: {
+    position: 'absolute',
+    top: '50%',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    transform: [{ translateY: -20 }], // Center vertically (half of height)
+  },
+  highlightModalNavButtonLeft: {
+    left: 10,
+  },
+  highlightModalNavButtonRight: {
+    right: 10,
+  },
+  highlightModalImageCounter: {
+    position: 'absolute',
+    bottom: 10,
+    right: 10,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    zIndex: 100,
+  },
+  highlightModalImageCounterText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: fonts.body,
   },
   modalVideoContainer: {
     width: '100%',
@@ -3530,8 +4538,117 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   imageModalImage: {
+    width: Dimensions.get('window').width,
+    height: '100%',
+  },
+  imageModalScrollView: {
+    flex: 1,
+    width: '100%',
+  },
+  imageModalScrollContent: {
+    alignItems: 'center',
+  },
+  imageModalNavButton: {
+    position: 'absolute',
+    top: '50%',
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 100,
+    transform: [{ translateY: -25 }], // Center vertically (half of height)
+  },
+  imageModalNavButtonLeft: {
+    left: 20,
+  },
+  imageModalNavButtonRight: {
+    right: 20,
+  },
+  imageModalCounter: {
+    position: 'absolute',
+    bottom: 30,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 16,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    zIndex: 100,
+  },
+  imageModalCounterText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+    fontFamily: fonts.body,
+  },
+  imageCounterBadge: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 12,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  imageCounterText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '600',
+    fontFamily: fonts.body,
+  },
+  selectedImagesScroll: {
+    marginTop: 12,
+    maxHeight: 150,
+  },
+  selectedImagesScrollContent: {
+    gap: 12,
+    paddingRight: 16,
+  },
+  selectedImageItem: {
+    width: 120,
+    height: 120,
+    borderRadius: 8,
+    position: 'relative',
+    marginRight: 12,
+    backgroundColor: colors.cardMuted,
+  },
+  selectedImagePreview: {
     width: '100%',
     height: '100%',
+    borderRadius: 8,
+  },
+  removeImageButton: {
+    position: 'absolute',
+    top: 4,
+    right: 4,
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  selectedImageSize: {
+    position: 'absolute',
+    bottom: 4,
+    left: 4,
+    right: 4,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    borderRadius: 4,
+    paddingHorizontal: 4,
+    paddingVertical: 2,
+    color: '#fff',
+    fontSize: 10,
+    fontFamily: fonts.body,
+    textAlign: 'center',
+  },
+  selectedImagesCount: {
+    marginTop: 8,
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
+    textAlign: 'center',
   },
 });
 
