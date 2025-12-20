@@ -5,9 +5,11 @@ import {
   FlatList,
   Image,
   Modal,
+  Platform,
   Pressable,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -26,6 +28,7 @@ import Toast from 'react-native-toast-message';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
+import { BASE_URL } from '../config/api';
 import { GalleryService, type GalleryImage, type GalleryStatus } from '../services/gallery';
 import {
   getStoredGalleryImages,
@@ -411,6 +414,74 @@ export const GalleryScreen = () => {
     });
   };
 
+  const generateGalleryDeepLink = (imageId: string): string => {
+    // Generate deep link for gallery image
+    // Format: mykuttam://gallery/:id
+    return `mykuttam://gallery/${imageId}`;
+  };
+
+  const generateGalleryWebUrl = (imageId: string): string => {
+    // Generate web URL for sharing (more compatible with messaging apps)
+    // Backend serves HTML pages at GET /gallery/:id (not /api/gallery/:id)
+    // This endpoint includes Open Graph tags for rich link previews
+    // Always use BASE_URL from environment variable
+    if (!BASE_URL) {
+      return '';
+    }
+    
+    // Remove /api from BASE_URL if present (web endpoint is at root level)
+    let baseUrl = BASE_URL;
+    
+    if (baseUrl.endsWith('/api')) {
+      baseUrl = baseUrl.slice(0, -4);
+    } else if (baseUrl.includes('/api/')) {
+      baseUrl = baseUrl.replace('/api', '');
+    }
+    
+    // Ensure no trailing slash
+    baseUrl = baseUrl.replace(/\/$/, '');
+    
+    return `${baseUrl}/gallery/${imageId}`;
+  };
+
+  const handleShareImage = async (image: GalleryImage) => {
+    try {
+      const deepLink = generateGalleryDeepLink(image.id);
+      const webUrl = generateGalleryWebUrl(image.id);
+      
+      // Format like Instagram - URL first, then description
+      // This helps messaging apps recognize it as a link and show preview
+      const description = image.description || 'Check out this image from the gallery';
+      const message = `${webUrl}\n\n${description}`;
+      
+      // For iOS, use url property for better link preview support
+      // For Android, put URL at the start of message for better recognition
+      const shareContent = Platform.OS === 'ios' 
+        ? {
+            url: webUrl, // iOS: URL property helps with link preview
+            message: description,
+            title: 'Gallery Image',
+          }
+        : {
+            message: message, // Android: URL in message for better recognition
+            title: 'Gallery Image',
+          };
+
+      const result = await Share.share(shareContent);
+      if (result.action === Share.sharedAction) {
+        // Share was successful
+      } else if (result.action === Share.dismissedAction) {
+        // Share was dismissed
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Share failed',
+        text2: error instanceof Error ? error.message : 'Unable to share image',
+      });
+    }
+  };
+
   const handleImagePicker = () => {
     const options = {
       mediaType: 'photo' as MediaType,
@@ -648,6 +719,16 @@ export const GalleryScreen = () => {
                   </Text>
                 </View>
                 <View style={styles.modalHeaderRight}>
+                  <TouchableOpacity
+                    style={styles.shareButtonModal}
+                    onPress={() => {
+                      if (selectedImage) {
+                        handleShareImage(selectedImage);
+                      }
+                    }}
+                    activeOpacity={0.7}>
+                    <Icon name="share" size={16} color="#fff" />
+                  </TouchableOpacity>
                   {selectedImage && (isImageOwner(selectedImage) || isAdmin) && (
                     <TouchableOpacity
                       style={styles.deleteButtonModal}
@@ -1094,6 +1175,14 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   closeButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  shareButtonModal: {
     width: 32,
     height: 32,
     borderRadius: 16,

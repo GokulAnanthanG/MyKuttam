@@ -489,8 +489,9 @@ export const DonationService = {
   },
 
   getUserDonationsOverall: async (
-    userIdOrPhone: string,
     params?: {
+      userId?: string;
+      phone?: string;
       page?: number;
       limit?: number;
       startDate?: string;
@@ -500,7 +501,7 @@ export const DonationService = {
   ): Promise<UserDonationsOverallResponse> => {
     const headers = await getAuthHeaders();
     const query = buildQueryString(params);
-    const response = await fetch(`${endpoints.userDonationsOverall(userIdOrPhone)}${query}`, {
+    const response = await fetch(`${endpoints.userDonationsOverall}${query}`, {
       method: 'GET',
       headers,
     });

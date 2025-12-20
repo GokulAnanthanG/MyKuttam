@@ -56,8 +56,7 @@ export const endpoints = {
   // User donation endpoints
   userDonationsByCategory: (userIdOrPhone: string, categoryId: string) =>
     `${BASE_URL}/api/donations/user/${userIdOrPhone}/category/${categoryId}`,
-  userDonationsOverall: (userIdOrPhone: string) =>
-    `${BASE_URL}/api/donations/user/${userIdOrPhone}/overall`,
+  userDonationsOverall: `${BASE_URL}/api/donations/user/overall`,
   // Push notification endpoints
   fcmToken: `${BASE_URL}/api/user/fcm-token`,
 };

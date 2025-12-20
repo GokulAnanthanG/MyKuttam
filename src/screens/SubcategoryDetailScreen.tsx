@@ -231,6 +231,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const [userDonationsCategoryLoadingMore, setUserDonationsCategoryLoadingMore] = useState(false);
   const [userDonationsOverallLoadingMore, setUserDonationsOverallLoadingMore] = useState(false);
   const [userDonationPhone, setUserDonationPhone] = useState('');
+  const [userDonationUserId, setUserDonationUserId] = useState<string | null>(null);
   const [userDonationStartDate, setUserDonationStartDate] = useState<Date | null>(null);
   const [userDonationEndDate, setUserDonationEndDate] = useState<Date | null>(null);
   const [userDonationPaymentStatus, setUserDonationPaymentStatus] = useState<'pending' | 'success' | 'failed' | 'all'>('all');
@@ -1028,11 +1029,31 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       anyItem.donor_id?.phone ||
       '';
     
-    if (!donorPhone) {
+    // Extract donor_id from donation - could be in donor.id or donor_id
+    const donorId =
+      donation.donor?.id ||
+      anyItem.donor_id?.id ||
+      anyItem.donor_id ||
+      null;
+
+    // Check payment_method to determine which parameter to use
+    const paymentMethod = donation.payment_method || anyItem.payment_method || 'offline';
+    const isOffline = paymentMethod === 'offline';
+
+    if (isOffline && !donorPhone) {
       Toast.show({
         type: 'error',
         text1: 'Phone number not found',
-        text2: 'This donation does not have a phone number associated.',
+        text2: 'This offline donation does not have a phone number associated.',
+      });
+      return;
+    }
+
+    if (!isOffline && !donorId) {
+      Toast.show({
+        type: 'error',
+        text1: 'User ID not found',
+        text2: 'This online donation does not have a user ID associated.',
       });
       return;
     }
@@ -1060,6 +1081,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
     // Reset all state for new donor
     setUserDonationPhone(donorPhone);
+    setUserDonationUserId(isOffline ? null : donorId);
     setUserDonationsCategoryPage(1);
     setUserDonationsOverallPage(1);
     setUserDonationsCategory([]);
@@ -1088,8 +1110,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     });
 
     setDonationModalVisible(true);
-    // Fetch immediately with the phone number
-    fetchUserDonations('category', 1, true, donorPhone);
+    // Fetch immediately with the appropriate parameter
+    fetchUserDonations('category', 1, true, donorPhone, donorId, isOffline);
   };
 
   const handleOpenDonorProfile = (donation: UserDonationRecord) => {
@@ -1111,13 +1133,33 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     page: number = 1,
     reset: boolean = false,
     phoneOverride?: string,
+    userIdOverride?: string | null,
+    isOfflineOverride?: boolean,
   ) => {
     const phoneToUse = phoneOverride || userDonationPhone;
-    if (!phoneToUse.trim()) {
+    const userIdToUse = userIdOverride !== undefined ? userIdOverride : userDonationUserId;
+    
+    // Determine if this is an offline donation
+    // If override is provided, use it; otherwise, check if we have userId (online) or only phone (offline)
+    const isOffline = isOfflineOverride !== undefined 
+      ? isOfflineOverride 
+      : !userIdToUse; // If no userId, it's offline (uses phone)
+
+    // Validate required parameters based on payment method
+    if (isOffline && !phoneToUse.trim()) {
       Toast.show({
         type: 'error',
         text1: 'Phone number required',
         text2: 'Please enter a phone number to fetch donations.',
+      });
+      return;
+    }
+
+    if (!isOffline && !userIdToUse) {
+      Toast.show({
+        type: 'error',
+        text1: 'User ID required',
+        text2: 'User ID is required for online donations.',
       });
       return;
     }
@@ -1150,7 +1192,9 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       }
 
       if (type === 'category') {
-        const response = await DonationService.getUserDonationsByCategory(phoneToUse, categoryId, params);
+        // For category donations, still use phone/userId in path (existing endpoint)
+        const identifier = isOffline ? phoneToUse : userIdToUse!;
+        const response = await DonationService.getUserDonationsByCategory(identifier, categoryId, params);
         if (response.success && response.data) {
           if (reset) {
             setUserDonationsCategory(response.data.donations);
@@ -1173,7 +1217,15 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           setUserDonationsCategoryHasMore(page < response.data.pagination.totalPages);
         }
       } else {
-        const response = await DonationService.getUserDonationsOverall(phoneToUse, params);
+        // For overall donations, use query parameters based on payment method
+        const overallParams = { ...params };
+        if (isOffline) {
+          overallParams.phone = phoneToUse;
+        } else {
+          overallParams.userId = userIdToUse;
+        }
+        
+        const response = await DonationService.getUserDonationsOverall(overallParams);
         if (response.success && response.data) {
           if (reset) {
             setUserDonationsOverall(response.data.donations);
