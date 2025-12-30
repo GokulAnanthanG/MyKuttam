@@ -101,6 +101,25 @@ export const GalleryService = {
     return data;
   },
 
+  getGalleryImageById: async (id: string): Promise<{ success: boolean; message: string; data?: GalleryImage }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.deleteGalleryImage(id), {
+      method: 'GET',
+      headers,
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string; data?: GalleryImage })
+      : ({} as { success: boolean; message: string; data?: GalleryImage });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to fetch gallery image');
+    }
+
+    return data;
+  },
+
   deleteImage: async (id: string): Promise<{ success: boolean; message: string }> => {
     const headers = await getAuthHeaders();
     const response = await fetch(endpoints.deleteGalleryImage(id), {

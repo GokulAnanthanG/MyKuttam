@@ -86,7 +86,7 @@ type LoginResponse = {
       father_name?: string;
       address?: string;
       account_type: string;
-      role: string;
+      role: string[]; // Backend returns array of roles
       status?: string;
       report_count?: number;
     };
@@ -207,7 +207,7 @@ export const AuthService = {
           father_name?: string;
           address?: string;
           account_type: string;
-          role: string;
+          role: string[]; // Backend returns array of roles
           status?: string;
           report_count?: number;
         };
@@ -310,7 +310,7 @@ export const AuthService = {
           father_name?: string;
           address?: string;
           account_type: string;
-          role: string;
+          role: string[]; // Backend returns array of roles
           status?: string;
           report_count?: number;
         };

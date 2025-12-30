@@ -257,10 +257,10 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
       return false;
     }
-    if (currentUser.role === 'ADMIN' || currentUser.role === 'SUB_ADMIN') {
+    if (currentUser.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r))) {
       return true;
     }
-    if (currentUser.role === 'DONATION_MANAGER') {
+    if (currentUser.role && currentUser.role.includes('DONATION_MANAGER')) {
       if (!currentUser.id) {
         return false;
       }
@@ -286,9 +286,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       return false;
     }
     return (
-      currentUser.role === 'ADMIN' ||
-      currentUser.role === 'SUB_ADMIN' ||
-      currentUser.role === 'DONATION_MANAGER'
+      currentUser.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN', 'DONATION_MANAGER'].includes(r))
     );
   }, [currentUser]);
 
@@ -523,7 +521,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   };
 
   const handleMapManager = async () => {
-    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUB_ADMIN') {
+    if (!currentUser?.role || !currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r))) {
       Alert.alert('Access denied', 'Only ADMIN and SUB_ADMIN can map donation managers.');
       return;
     }
@@ -564,7 +562,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   };
 
   const handleOpenEditSubcategoryModal = () => {
-    if (currentUser?.role !== 'ADMIN' && currentUser?.role !== 'SUB_ADMIN') {
+    if (!currentUser?.role || !currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r))) {
       Alert.alert('Access denied', 'Only ADMIN and SUB_ADMIN can edit subcategories.');
       return;
     }
@@ -2578,14 +2576,14 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         label: 'Map manager',
         icon: 'user-plus',
         onPress: handleMapManager,
-        visible: currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN',
+        visible: currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r)),
       },
       {
         key: 'edit',
         label: 'Edit subcategory',
         icon: 'edit',
         onPress: handleOpenEditSubcategoryModal,
-        visible: currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN',
+        visible: currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r)),
       },
     ].filter((action) => action.visible);
   }, [canManageSubcategory, currentUser?.role, isSubcategoryActive]);

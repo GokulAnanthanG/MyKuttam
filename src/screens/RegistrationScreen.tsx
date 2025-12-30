@@ -84,7 +84,7 @@ export const RegistrationScreen = ({ navigation, route }: Props) => {
       name: form.name.trim(),
       password: form.password.trim(),
       account_type: form.account_type,
-      role: form.role,
+      role: [form.role], // Wrap single role in array
       dob: formatDateForAPI(form.dob),
       father_name: form.father_name ? form.father_name.trim() : undefined,
       address: form.address ? form.address.trim() : undefined,

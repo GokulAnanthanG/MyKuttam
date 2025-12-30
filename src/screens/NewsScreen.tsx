@@ -404,8 +404,8 @@ export const NewsScreen = () => {
   const canEditDelete = (news: News) => {
     if (!currentUser) return false;
     const userRole = currentUser.role;
-    const isAdmin = userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
-    const isHelper = userRole === 'HELPHER' && currentUser.account_type === 'MANAGEMENT';
+    const isAdmin = userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+    const isHelper = userRole && userRole.includes('HELPHER') && currentUser.account_type === 'MANAGEMENT';
     return isAdmin || isHelper;
   };
 
@@ -413,8 +413,8 @@ export const NewsScreen = () => {
   const canCreateNews = () => {
     if (!currentUser) return false;
     const userRole = currentUser.role;
-    const isAdmin = userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
-    const isHelper = userRole === 'HELPHER' && currentUser.account_type === 'MANAGEMENT';
+    const isAdmin = userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+    const isHelper = userRole && userRole.includes('HELPHER') && currentUser.account_type === 'MANAGEMENT';
     return isAdmin || isHelper;
   };
 
@@ -422,7 +422,16 @@ export const NewsScreen = () => {
   const canAddComment = () => {
     if (!currentUser) return false;
     const userRole = currentUser.role;
-    return userRole === 'ADMIN' || userRole === 'SUB_ADMIN';
+    return userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+  };
+
+  // Check if user can edit/delete a comment (comment owner OR admin/sub-admin)
+  const canEditDeleteComment = (comment: Comment) => {
+    if (!currentUser) return false;
+    const isOwnComment = comment.user_id.id === currentUser.id;
+    const userRole = currentUser.role;
+    const isAdmin = userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+    return isOwnComment || isAdmin;
   };
 
   // Check like status for all news items
@@ -2224,7 +2233,7 @@ export const NewsScreen = () => {
   };
 
   const renderComment = ({ item }: { item: Comment }) => {
-    const isOwnComment = currentUser && item.user_id.id === currentUser.id;
+    const canEditDelete = canEditDeleteComment(item);
     const isEditing = editingCommentId === item.id;
     const isDeleting = deletingCommentId === item.id;
 
@@ -2243,7 +2252,7 @@ export const NewsScreen = () => {
           <View style={styles.commentContent}>
             <View style={styles.commentHeaderRow}>
               <Text style={styles.commentAuthor}>{item.user_id.name || 'Anonymous'}</Text>
-              {isOwnComment && !isEditing && (
+              {canEditDelete && !isEditing && (
                 <TouchableOpacity
                   style={styles.commentMenuButton}
                   onPress={(e) => {
@@ -2298,7 +2307,7 @@ export const NewsScreen = () => {
             )}
           </View>
         </View>
-        {isOwnComment && commentMenuVisible === item.id && !isEditing && (
+        {canEditDelete && commentMenuVisible === item.id && !isEditing && (
           <Pressable
             onPress={(e) => e.stopPropagation()}
             style={styles.commentMenu}>

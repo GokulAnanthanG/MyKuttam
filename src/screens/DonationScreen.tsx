@@ -99,7 +99,7 @@ export const DonationScreen = () => {
     if (!currentUser?.role) {
       return false;
     }
-    return currentUser.role === 'ADMIN' || currentUser.role === 'SUB_ADMIN';
+    return currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
   }, [currentUser?.role]);
 
   const loadSummary = useCallback(async (options?: { isRefresh?: boolean }) => {

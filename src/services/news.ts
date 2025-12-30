@@ -6,7 +6,7 @@ export type NewsUser = {
   _id: string;
   name: string;
   phone: string;
-  role: string;
+  role: string[]; // Changed to array to support multiple roles
   avatar?: string;
 };
 

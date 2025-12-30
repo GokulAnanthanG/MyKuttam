@@ -25,7 +25,7 @@ export const HomeScreen = () => {
   const appState = useRef(AppState.currentState);
 
   const isAdmin = useMemo(() => {
-    return currentUser?.role === 'ADMIN';
+    return currentUser?.role && currentUser.role.includes('ADMIN');
   }, [currentUser?.role]);
 
   useEffect(() => {

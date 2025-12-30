@@ -283,7 +283,7 @@ export const ProfileScreen = () => {
             )}
           </View>
           <Text style={styles.userName}>{currentUser.name}</Text>
-          <Text style={styles.userRole}>{currentUser.role}</Text>
+          <Text style={styles.userRole}>{currentUser.role ? currentUser.role.join(', ') : 'USER'}</Text>
         </View>
 
         {/* Form Section */}
@@ -416,7 +416,7 @@ export const ProfileScreen = () => {
                 </View>
                 <View style={styles.detailContent}>
                   <Text style={styles.detailLabel}>Role</Text>
-                  <Text style={styles.detailValue}>{currentUser.role}</Text>
+                  <Text style={styles.detailValue}>{currentUser.role ? currentUser.role.join(', ') : 'USER'}</Text>
                 </View>
               </View>
             </View>

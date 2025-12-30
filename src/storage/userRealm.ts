@@ -32,7 +32,7 @@ const UserSchema: Realm.ObjectSchema = {
     name: 'string',
     password: 'string?',
     account_type: 'string',
-    role: 'string',
+    role: 'string[]', // Changed to array to support multiple roles
     dob: 'date?',
     avatar: 'string?',
     father_name: 'string?',
@@ -55,7 +55,7 @@ const getRealm = async () => {
   realmInstance = await Realm.open({
     path: 'mykuttam-users',
     schema: [UserSchema],
-    schemaVersion: 2, // Updated to include token field
+    schemaVersion: 3, // Updated to change role from string to array
   });
 
   return realmInstance;

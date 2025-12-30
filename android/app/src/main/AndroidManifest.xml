@@ -39,6 +39,20 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" android:host="95b4c77b93f1.ngrok-free.app" android:pathPrefix="/news" />
         </intent-filter>
+        <!-- Deep link intent filter for mykuttam://gallery/:id -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="mykuttam" android:host="gallery" />
+        </intent-filter>
+        <!-- Universal link intent filter for gallery -->
+        <intent-filter android:autoVerify="true">
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" android:host="95b4c77b93f1.ngrok-free.app" android:pathPrefix="/gallery" />
+        </intent-filter>
       </activity>
     </application>
 </manifest>

@@ -13,7 +13,7 @@ export type StoredUser = {
   name: string;
   password?: string; // Optional since we might not always have it
   account_type: AccountType;
-  role: UserRole;
+  role: UserRole[]; // Changed from single role to array of roles
   dob?: string;
   avatar?: string;
   father_name?: string;

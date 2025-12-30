@@ -4,6 +4,7 @@ import {
   Alert,
   FlatList,
   Image,
+  Linking,
   Modal,
   Platform,
   Pressable,
@@ -25,6 +26,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Toast from 'react-native-toast-message';
+import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -38,6 +40,7 @@ import { GallerySkeleton } from '../components/GallerySkeleton';
 
 export const GalleryScreen = () => {
   const { currentUser } = useAuth();
+  const navigation = useNavigation();
   const [images, setImages] = useState<GalleryImage[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -56,7 +59,7 @@ export const GalleryScreen = () => {
   const isFetchingRef = useRef(false);
   const hasShownOfflineToastRef = useRef(false);
 
-  const isAdmin = currentUser?.role === 'ADMIN' || currentUser?.role === 'SUB_ADMIN';
+  const isAdmin = currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
 
   const fetchImages = useCallback(
     async (pageNum: number = 1, append: boolean = false) => {
@@ -244,6 +247,94 @@ export const GalleryScreen = () => {
       unsubscribe();
     };
   }, []);
+
+  // Deep link handling - open gallery image when deep link is clicked
+  useEffect(() => {
+    // Handle deep link when app is already open
+    const handleDeepLink = (event: { url: string }) => {
+      const url = event.url;
+      // Parse deep link: mykuttam://gallery/:id
+      const deepLinkMatch = url.match(/mykuttam:\/\/gallery\/(.+)/);
+      if (deepLinkMatch && deepLinkMatch[1]) {
+        const imageId = deepLinkMatch[1];
+        // Navigate to Gallery tab if not already there
+        (navigation as any).navigate('MainTabs', {
+          screen: 'Gallery',
+        });
+        // Small delay to ensure navigation completes
+        setTimeout(() => {
+          // Find the image in current list
+          const image = images.find((img) => img.id === imageId);
+          if (image) {
+            setSelectedImage(image);
+            setShowFullscreenImage(true);
+          } else {
+            // If image not loaded yet, fetch it
+            fetchGalleryImageById(imageId);
+          }
+        }, 300);
+        return;
+      }
+
+      // Parse web URL: https://domain.com/gallery/:id
+      const webUrlMatch = url.match(/https?:\/\/[^\/]+\/gallery\/(.+)/);
+      if (webUrlMatch && webUrlMatch[1]) {
+        const imageId = webUrlMatch[1];
+        // Navigate to Gallery tab if not already there
+        (navigation as any).navigate('MainTabs', {
+          screen: 'Gallery',
+        });
+        // Small delay to ensure navigation completes
+        setTimeout(() => {
+          // Find the image in current list
+          const image = images.find((img) => img.id === imageId);
+          if (image) {
+            setSelectedImage(image);
+            setShowFullscreenImage(true);
+          } else {
+            // If image not loaded yet, fetch it
+            fetchGalleryImageById(imageId);
+          }
+        }, 300);
+      }
+    };
+
+    // Handle deep link when app opens from closed state
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
+
+    // Listen for deep links when app is open
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [images, navigation]);
+
+  const fetchGalleryImageById = async (imageId: string) => {
+    try {
+      const response = await GalleryService.getGalleryImageById(imageId);
+      if (response.success && response.data) {
+        setSelectedImage(response.data);
+        setShowFullscreenImage(true);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Image not found',
+          text2: 'The gallery image you are trying to view does not exist.',
+        });
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load gallery image.',
+      });
+    }
+  };
 
   useEffect(() => {
     // Reset when status changes and fetch new images
