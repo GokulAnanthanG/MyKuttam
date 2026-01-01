@@ -17,6 +17,7 @@ import {
   View,
   Linking,
   Switch,
+  Share,
 } from 'react-native';
 import Clipboard from '@react-native-clipboard/clipboard';
 import { NativeStackScreenProps } from '@react-navigation/native-stack';
@@ -1788,6 +1789,204 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     ]);
   };
 
+  const handleDownloadDonationsPDF = async () => {
+    if (sortedDonations.length === 0) {
+      Toast.show({
+        type: 'info',
+        text1: 'No donations',
+        text2: 'There are no donations to download.',
+      });
+      return;
+    }
+
+    try {
+      const totalAmount = sortedDonations.reduce((sum, item) => sum + item.amount, 0);
+      
+      // Generate HTML content for PDF
+      const htmlContent = `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Donations Report - ${subcategoryTitle}</title>
+  <style>
+    @media print {
+      body { margin: 0; }
+      .no-print { display: none; }
+    }
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      color: #333;
+      font-size: 12px;
+    }
+    h1 {
+      color: #2c3e50;
+      margin-bottom: 5px;
+      font-size: 18px;
+    }
+    h2 {
+      color: #34495e;
+      font-size: 12px;
+      margin-bottom: 10px;
+      font-weight: normal;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 15px;
+      font-size: 11px;
+    }
+    th {
+      background-color: #3498db;
+      color: white;
+      padding: 8px;
+      text-align: left;
+      font-weight: bold;
+      border: 1px solid #2980b9;
+    }
+    td {
+      padding: 6px 8px;
+      border: 1px solid #ddd;
+    }
+    tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+    .total-row {
+      background-color: #ecf0f1;
+      font-weight: bold;
+    }
+    .amount {
+      text-align: right;
+    }
+    .date {
+      white-space: nowrap;
+    }
+    .header-info {
+      margin-bottom: 15px;
+      padding-bottom: 10px;
+      border-bottom: 2px solid #3498db;
+    }
+  </style>
+</head>
+<body>
+  <div class="header-info">
+    <h1>Donations Report</h1>
+    <h2>Category: ${categoryName}</h2>
+    <h2>Subcategory: ${subcategoryTitle}</h2>
+    ${subcategoryDescription ? `<h2>Description: ${subcategoryDescription}</h2>` : ''}
+    <h2>Generated: ${new Date().toLocaleString()}</h2>
+  </div>
+  
+  <table>
+    <thead>
+      <tr>
+        <th>Donor Name</th>
+        <th>Father Name</th>
+        <th>Date</th>
+        <th class="amount">Amount (₹)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${sortedDonations
+        .map((item) => {
+          const anyItem: any = item;
+          const donorName =
+            item.donor?.name ||
+            anyItem.Donor_name ||
+            anyItem.donor_id?.name ||
+            'Anonymous donor';
+          const fatherName = anyItem.donor_father_name || '-';
+          const date = formatDate(item.createdAt);
+          const amount = formatCurrency(item.amount);
+
+          return `
+        <tr>
+          <td>${donorName}</td>
+          <td>${fatherName}</td>
+          <td class="date">${date}</td>
+          <td class="amount">${amount}</td>
+        </tr>
+      `;
+        })
+        .join('')}
+      <tr class="total-row">
+        <td colspan="3"><strong>Total (${sortedDonations.length} donations)</strong></td>
+        <td class="amount"><strong>${formatCurrency(totalAmount)}</strong></td>
+      </tr>
+    </tbody>
+  </table>
+</body>
+</html>
+      `;
+
+      // Encode HTML as data URI
+      const dataUri = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`;
+      
+      // Try to open in browser for printing/saving as PDF
+      const canOpen = await Linking.canOpenURL(dataUri);
+      if (canOpen) {
+        await Linking.openURL(dataUri);
+        Toast.show({
+          type: 'success',
+          text1: 'Report opened',
+          text2: 'Use browser print option to save as PDF.',
+        });
+      } else {
+        // Fallback: Share as formatted text
+        let reportText = `DONATIONS REPORT\n`;
+        reportText += `================\n\n`;
+        reportText += `Category: ${categoryName}\n`;
+        reportText += `Subcategory: ${subcategoryTitle}\n`;
+        if (subcategoryDescription) {
+          reportText += `Description: ${subcategoryDescription}\n`;
+        }
+        reportText += `Generated: ${new Date().toLocaleString()}\n\n`;
+        reportText += `Total Donations: ${sortedDonations.length}\n`;
+        reportText += `Total Amount: ${formatCurrency(totalAmount)}\n\n`;
+        reportText += `DONATIONS LIST\n`;
+        reportText += `${'='.repeat(80)}\n\n`;
+        
+        reportText += `${'Donor Name'.padEnd(25)} ${'Father Name'.padEnd(25)} ${'Date'.padEnd(20)} ${'Amount'.padStart(15)}\n`;
+        reportText += `${'-'.repeat(85)}\n`;
+        
+        sortedDonations.forEach((item) => {
+          const anyItem: any = item;
+          const donorName =
+            (item.donor?.name ||
+              anyItem.Donor_name ||
+              anyItem.donor_id?.name ||
+              'Anonymous donor').substring(0, 24);
+          const fatherName = (anyItem.donor_father_name || '-').substring(0, 24);
+          const date = formatDate(item.createdAt).substring(0, 19);
+          const amount = formatCurrency(item.amount);
+
+          reportText += `${donorName.padEnd(25)} ${fatherName.padEnd(25)} ${date.padEnd(20)} ${amount.padStart(15)}\n`;
+        });
+        
+        reportText += `${'-'.repeat(85)}\n`;
+        reportText += `${'TOTAL'.padEnd(70)} ${formatCurrency(totalAmount).padStart(15)}\n`;
+
+        const shareOptions = {
+          message: reportText,
+          title: `Donations Report - ${subcategoryTitle}`,
+          ...(Platform.OS === 'ios' && {
+            subject: `Donations Report - ${subcategoryTitle}`,
+          }),
+        };
+
+        await Share.share(shareOptions);
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Download failed',
+        text2: error instanceof Error ? error.message : 'Unable to generate PDF report.',
+      });
+    }
+  };
+
   const handleLoadMoreDonations = useCallback(() => {
     if (!donationHasMore || donationLoadingMore) {
       return;
@@ -2547,6 +2746,32 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     return categoryStatus === 'active' && subcategoryStatus === 'active';
   }, [categoryStatus, subcategoryStatus]);
 
+  // Check if user can download PDF (ADMIN, SUB_ADMIN, or DONATION_MANAGER mapped to this subcategory)
+  const canDownloadPDF = useMemo(() => {
+    if (!currentUser) return false;
+    
+    // ADMIN and SUB_ADMIN can always download
+    if (currentUser.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r))) {
+      return true;
+    }
+    
+    // DONATION_MANAGER can download only if mapped to this subcategory
+    if (currentUser.role && currentUser.role.includes('DONATION_MANAGER')) {
+      if (!currentUser.id) {
+        return false;
+      }
+      // Check both route params managers and fetched subcategory managers
+      const routeManagerIds = (managers || []).map((m) => m.id);
+      const subcategoryManagerIds = subcategoryManagers.map((m) => m.id);
+      const isInRouteManagers = routeManagerIds.includes(currentUser.id);
+      const isInSubcategoryManagers = subcategoryManagerIds.includes(currentUser.id);
+      
+      return isInRouteManagers || isInSubcategoryManagers;
+    }
+    
+    return false;
+  }, [currentUser, managers, subcategoryManagers]);
+
   const floatingActions = useMemo(() => {
     return [
       {
@@ -2572,6 +2797,13 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         visible: canManageSubcategory,
       },
       {
+        key: 'download',
+        label: 'Download PDF',
+        icon: 'file-pdf-o',
+        onPress: handleDownloadDonationsPDF,
+        visible: canDownloadPDF && sortedDonations.length > 0,
+      },
+      {
         key: 'map',
         label: 'Map manager',
         icon: 'user-plus',
@@ -2586,7 +2818,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         visible: currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r)),
       },
     ].filter((action) => action.visible);
-  }, [canManageSubcategory, currentUser?.role, isSubcategoryActive]);
+  }, [canManageSubcategory, canDownloadPDF, isSubcategoryActive, sortedDonations.length]);
 
   if (loading && !refreshing) {
     return (
