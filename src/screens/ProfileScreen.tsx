@@ -10,6 +10,7 @@ import {
   Alert,
   Modal,
   TouchableWithoutFeedback,
+  TouchableOpacity,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -27,6 +28,8 @@ import { useAuth } from '../context/AuthContext';
 import { AppTextInput } from '../components/AppTextInput';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { RootStackParamList } from '../navigation/AppNavigator';
+import { UserService } from '../services/user';
+import { UserRole } from '../types/user';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -42,6 +45,12 @@ export const ProfileScreen = () => {
     newPassword: '',
     confirmPassword: '',
   });
+  const [showRoleUpdateModal, setShowRoleUpdateModal] = useState(false);
+  const [roleUpdateData, setRoleUpdateData] = useState({
+    phone: '',
+    roles: [] as UserRole[],
+  });
+  const [updatingRole, setUpdatingRole] = useState(false);
 
   const [formData, setFormData] = useState({
     name: currentUser?.name || '',
@@ -201,6 +210,79 @@ export const ProfileScreen = () => {
         newPassword: '',
         confirmPassword: '',
       });
+    }
+  };
+
+  // Check if current user is ADMIN (not SUB_ADMIN)
+  const isAdmin = () => {
+    if (!currentUser) return false;
+    return currentUser.role && currentUser.role.includes('ADMIN');
+  };
+
+  // Available roles for selection
+  const availableRoles: UserRole[] = ['ADMIN', 'SUB_ADMIN', 'HELPER', 'DONATION_MANAGER', 'USER'];
+
+  const handleRoleToggle = (role: UserRole) => {
+    setRoleUpdateData((prev) => {
+      const isSelected = prev.roles.includes(role);
+      if (isSelected) {
+        return {
+          ...prev,
+          roles: prev.roles.filter((r) => r !== role),
+        };
+      } else {
+        return {
+          ...prev,
+          roles: [...prev.roles, role],
+        };
+      }
+    });
+  };
+
+  const handleUpdateRole = async () => {
+    if (!roleUpdateData.phone.trim()) {
+      Alert.alert('Validation Error', 'Phone number is required');
+      return;
+    }
+
+    if (roleUpdateData.phone.trim().length !== 10) {
+      Alert.alert('Validation Error', 'Phone number must be exactly 10 digits');
+      return;
+    }
+
+    if (roleUpdateData.roles.length === 0) {
+      Alert.alert('Validation Error', 'Please select at least one role');
+      return;
+    }
+
+    try {
+      setUpdatingRole(true);
+      const response = await UserService.updateUserRole(
+        roleUpdateData.phone.trim(),
+        roleUpdateData.roles,
+      );
+
+      if (response.success) {
+        Alert.alert('Success', 'User role updated successfully', [
+          {
+            text: 'OK',
+            onPress: () => {
+              setShowRoleUpdateModal(false);
+              setRoleUpdateData({
+                phone: '',
+                roles: [],
+              });
+            },
+          },
+        ]);
+      }
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'Failed to update user role',
+      );
+    } finally {
+      setUpdatingRole(false);
     }
   };
 
@@ -560,6 +642,124 @@ export const ProfileScreen = () => {
           </TouchableWithoutFeedback>
         </View>
       </Modal>
+
+      {/* Update User Role Modal */}
+      <Modal
+        visible={showRoleUpdateModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowRoleUpdateModal(false)}>
+        <View style={styles.resetPasswordModalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setShowRoleUpdateModal(false)}>
+            <View style={styles.modalContent}>
+              <TouchableWithoutFeedback>
+                <View style={styles.roleUpdateContainer}>
+                  <View style={styles.resetPasswordHeader}>
+                    <Text style={styles.resetPasswordTitle}>Update User Role</Text>
+                    <Pressable
+                      onPress={() => {
+                        setShowRoleUpdateModal(false);
+                        setRoleUpdateData({
+                          phone: '',
+                          roles: [],
+                        });
+                      }}
+                      style={styles.closeButton}>
+                      <Icon name="times" size={20} color={colors.text} />
+                    </Pressable>
+                  </View>
+
+                  <ScrollView
+                    style={styles.roleUpdateScrollView}
+                    contentContainerStyle={styles.roleUpdateForm}
+                    showsVerticalScrollIndicator={true}>
+                    <AppTextInput
+                      label="Phone Number"
+                      placeholder="Enter 10-digit phone number"
+                      value={roleUpdateData.phone}
+                      onChangeText={(text) => {
+                        // Only allow numbers
+                        const numericText = text.replace(/[^0-9]/g, '');
+                        if (numericText.length <= 10) {
+                          setRoleUpdateData({ ...roleUpdateData, phone: numericText });
+                        }
+                      }}
+                      keyboardType="phone-pad"
+                      maxLength={10}
+                    />
+
+                    <View style={styles.rolesSection}>
+                      <Text style={styles.rolesSectionTitle}>Select Roles</Text>
+                      <View style={styles.rolesList}>
+                        {availableRoles.map((role) => {
+                          const isSelected = roleUpdateData.roles.includes(role);
+                          return (
+                            <TouchableOpacity
+                              key={role}
+                              style={[
+                                styles.roleCheckbox,
+                                isSelected && styles.roleCheckboxSelected,
+                              ]}
+                              onPress={() => handleRoleToggle(role)}>
+                              <View
+                                style={[
+                                  styles.roleCheckboxInner,
+                                  isSelected && styles.roleCheckboxInnerSelected,
+                                ]}>
+                                {isSelected && (
+                                  <Icon name="check" size={16} color={colors.primary} />
+                                )}
+                              </View>
+                              <Text
+                                style={[
+                                  styles.roleCheckboxText,
+                                  isSelected && styles.roleCheckboxTextSelected,
+                                ]}>
+                                {role}
+                              </Text>
+                            </TouchableOpacity>
+                          );
+                        })}
+                      </View>
+                    </View>
+
+                    <View style={styles.resetPasswordButtons}>
+                      <PrimaryButton
+                        label="Cancel"
+                        onPress={() => {
+                          setShowRoleUpdateModal(false);
+                          setRoleUpdateData({
+                            phone: '',
+                            roles: [],
+                          });
+                        }}
+                        variant="secondary"
+                        style={styles.resetPasswordCancelButton}
+                      />
+                      <PrimaryButton
+                        label="Update Role"
+                        onPress={handleUpdateRole}
+                        loading={updatingRole}
+                        style={styles.resetPasswordSubmitButton}
+                      />
+                    </View>
+                  </ScrollView>
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </Modal>
+
+      {/* Floating Action Button - Only visible to ADMIN */}
+      {isAdmin() && (
+        <TouchableOpacity
+          style={styles.fab}
+          onPress={() => setShowRoleUpdateModal(true)}
+          activeOpacity={0.8}>
+          <Icon name="user-plus" size={24} color="#fff" />
+        </TouchableOpacity>
+      )}
     </SafeAreaView>
   );
 };
@@ -611,33 +811,6 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 16,
     color: colors.textMuted,
-  },
-  aboutLink: {
-    marginHorizontal: 20,
-    marginTop: 10,
-    marginBottom: 20,
-    backgroundColor: colors.card,
-    borderRadius: 12,
-    padding: 16,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-    elevation: 2,
-    borderWidth: 1,
-    borderColor: colors.primary + '20',
-  },
-  aboutLinkContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  aboutLinkText: {
-    flex: 1,
-    fontFamily: fonts.heading,
-    fontSize: 16,
-    color: colors.text,
-    fontWeight: '600',
   },
   header: {
     flexDirection: 'row',
@@ -1006,5 +1179,101 @@ const styles = StyleSheet.create({
   },
   resetPasswordSubmitButton: {
     flex: 1,
+  },
+  // Role Update Modal Styles
+  roleUpdateContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingBottom: 0,
+    maxHeight: '85%',
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 10,
+    flex: 1,
+  },
+  roleUpdateScrollView: {
+    flex: 1,
+  },
+  roleUpdateForm: {
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 30,
+  },
+  rolesSection: {
+    marginTop: 20,
+    marginBottom: 20,
+  },
+  rolesSectionTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '700',
+    marginBottom: 16,
+    letterSpacing: 0.3,
+  },
+  rolesList: {
+    gap: 12,
+  },
+  roleCheckbox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  roleCheckboxSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '10',
+  },
+  roleCheckboxInner: {
+    width: 24,
+    height: 24,
+    borderRadius: 6,
+    borderWidth: 2,
+    borderColor: colors.border,
+    marginRight: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.card,
+  },
+  roleCheckboxInnerSelected: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '15',
+  },
+  roleCheckboxText: {
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  roleCheckboxTextSelected: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  // Floating Action Button Styles
+  fab: {
+    position: 'absolute',
+    right: 20,
+    bottom: 20,
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: colors.primary,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+    zIndex: 1000,
   },
 });

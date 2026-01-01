@@ -3,7 +3,7 @@ export type AccountType = 'COMMON' | 'MANAGEMENT';
 export type UserRole =
   | 'ADMIN'
   | 'SUB_ADMIN'
-  | 'HELPHER'
+  | 'HELPER'
   | 'DONATION_MANAGER'
   | 'USER';
 

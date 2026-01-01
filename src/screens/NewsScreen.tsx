@@ -405,7 +405,7 @@ export const NewsScreen = () => {
     if (!currentUser) return false;
     const userRole = currentUser.role;
     const isAdmin = userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
-    const isHelper = userRole && userRole.includes('HELPHER') && currentUser.account_type === 'MANAGEMENT';
+    const isHelper = userRole && userRole.includes('HELPER') && currentUser.account_type === 'MANAGEMENT';
     return isAdmin || isHelper;
   };
 
@@ -414,15 +414,13 @@ export const NewsScreen = () => {
     if (!currentUser) return false;
     const userRole = currentUser.role;
     const isAdmin = userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
-    const isHelper = userRole && userRole.includes('HELPHER') && currentUser.account_type === 'MANAGEMENT';
+    const isHelper = userRole && userRole.includes('HELPER') && currentUser.account_type === 'MANAGEMENT';
     return isAdmin || isHelper;
   };
 
-  // Check if user can add comments (admin/sub-admin only)
+  // Check if user can add comments (all authenticated users)
   const canAddComment = () => {
-    if (!currentUser) return false;
-    const userRole = currentUser.role;
-    return userRole && userRole.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+    return !!currentUser;
   };
 
   // Check if user can edit/delete a comment (comment owner OR admin/sub-admin)
