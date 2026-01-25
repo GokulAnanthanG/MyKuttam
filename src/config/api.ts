@@ -64,6 +64,10 @@ export const endpoints = {
   fcmToken: `${BASE_URL}/api/user/fcm-token`,
   // User role management endpoints
   updateUserRole: (phone: string) => `${BASE_URL}/api/users/${phone}/account-type-role`,
+  // Audio endpoints
+  audio: `${BASE_URL}/api/audio`,
+  audioUpload: `${BASE_URL}/api/audio/upload`,
+  audioById: (id: string) => `${BASE_URL}/api/audio/${id}`,
 };
 
 export const ENV = Config?.ENV || 'development';

@@ -3,6 +3,7 @@ import Icon from 'react-native-vector-icons/FontAwesome';
 import { HomeScreen } from '../screens/HomeScreen';
 import { DonationNavigator } from './DonationNavigator';
 import { GalleryScreen } from '../screens/GalleryScreen';
+import { MusicScreen } from '../screens/MusicScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -12,6 +13,7 @@ export type BottomTabParamList = {
   Home: undefined;
   Donation: undefined;
   Gallery: undefined;
+  Music: undefined;
   Profile: undefined;
 };
 
@@ -84,6 +86,15 @@ export const BottomTabNavigator = () => {
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
             <TabIcon focused={focused} iconName="image" />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="Music"
+        component={MusicScreen}
+        options={{
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <TabIcon focused={focused} iconName="music" />
           ),
         }}
       />
