@@ -21,6 +21,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Toast from 'react-native-toast-message';
 import SoundPlayer from 'react-native-sound-player';
+import Slider from '@react-native-community/slider';
 import { pick, types, errorCodes, isErrorWithCode } from '@react-native-documents/picker';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
@@ -58,6 +59,8 @@ export const MusicScreen = () => {
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioDuration, setAudioDuration] = useState(0);
   const [audioPosition, setAudioPosition] = useState(0);
+  const [isSeeking, setIsSeeking] = useState(false);
+  const [seekValue, setSeekValue] = useState(0);
   const audioProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isFetchingRef = useRef(false);
 
@@ -78,7 +81,35 @@ export const MusicScreen = () => {
   // Animation refs for playing state
   const animationRefs = useRef<Record<string, Animated.Value>>({});
 
+  // Accordion state for expanding title/description separately
+  const [expandedTitles, setExpandedTitles] = useState<Set<string>>(new Set());
+  const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
+
   const isAdmin = currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+
+  const toggleTitleExpanded = useCallback((itemId: string) => {
+    setExpandedTitles((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  }, []);
+
+  const toggleDescriptionExpanded = useCallback((itemId: string) => {
+    setExpandedDescriptions((prev) => {
+      const newSet = new Set(prev);
+      if (newSet.has(itemId)) {
+        newSet.delete(itemId);
+      } else {
+        newSet.add(itemId);
+      }
+      return newSet;
+    });
+  }, []);
 
   // Initialize animation values for each audio
   useEffect(() => {
@@ -124,10 +155,13 @@ export const MusicScreen = () => {
     }
 
     audioProgressIntervalRef.current = setInterval(async () => {
+      if (isSeeking) return; // Don't update position while user is seeking
+      
       try {
         const info = await SoundPlayer.getInfo();
         if (typeof info?.currentTime === 'number' && !Number.isNaN(info.currentTime)) {
           setAudioPosition(info.currentTime);
+          setSeekValue(info.currentTime);
         }
         if (typeof info?.duration === 'number' && !Number.isNaN(info.duration)) {
           setAudioDuration(info.duration);
@@ -136,7 +170,7 @@ export const MusicScreen = () => {
         // Ignore errors during progress tracking
       }
     }, 500);
-  }, []);
+  }, [isSeeking]);
 
   const stopAudioProgressInterval = useCallback(() => {
     if (audioProgressIntervalRef.current) {
@@ -148,7 +182,69 @@ export const MusicScreen = () => {
   const resetAudioProgress = useCallback(() => {
     setAudioDuration(0);
     setAudioPosition(0);
+    setSeekValue(0);
   }, []);
+
+  const handleAudioSeek = useCallback(async (seconds: number) => {
+    if (!currentAudioId) return;
+
+    try {
+      const info = await SoundPlayer.getInfo();
+      if (typeof info?.currentTime === 'number' && !Number.isNaN(info.currentTime)) {
+        const newPosition = Math.max(0, Math.min(info.duration || 0, info.currentTime + seconds));
+        // Try to seek using the seek method if available
+        if (typeof (SoundPlayer as any).seek === 'function') {
+          (SoundPlayer as any).seek(newPosition);
+        } else if (typeof (SoundPlayer as any).setCurrentTime === 'function') {
+          (SoundPlayer as any).setCurrentTime(newPosition);
+        } else {
+          // If seek is not available, we'll update the position state but can't actually seek
+        }
+        setAudioPosition(newPosition);
+        setSeekValue(newPosition);
+      }
+    } catch (error) {
+      // If seek fails, at least update the UI state
+      const info = await SoundPlayer.getInfo().catch(() => null);
+      if (info && typeof info.currentTime === 'number') {
+        setAudioPosition(info.currentTime);
+        setSeekValue(info.currentTime);
+      }
+    }
+  }, [currentAudioId]);
+
+  const handleSeekToPosition = useCallback(async (position: number) => {
+    if (!currentAudioId) return;
+
+    try {
+      const newPosition = Math.max(0, Math.min(audioDuration || 0, position));
+      // Try to seek using the seek method if available
+      if (typeof (SoundPlayer as any).seek === 'function') {
+        (SoundPlayer as any).seek(newPosition);
+      } else if (typeof (SoundPlayer as any).setCurrentTime === 'function') {
+        (SoundPlayer as any).setCurrentTime(newPosition);
+      } else {
+        // If seek is not available, we'll update the position state but can't actually seek
+      }
+      setAudioPosition(newPosition);
+      setSeekValue(newPosition);
+    } catch (error) {
+      // If seek fails, at least update the UI state
+      const info = await SoundPlayer.getInfo().catch(() => null);
+      if (info && typeof info.currentTime === 'number') {
+        setAudioPosition(info.currentTime);
+        setSeekValue(info.currentTime);
+      }
+    }
+  }, [currentAudioId, audioDuration]);
+
+  const handleAudioForward = useCallback(() => {
+    handleAudioSeek(10);
+  }, [handleAudioSeek]);
+
+  const handleAudioBackward = useCallback(() => {
+    handleAudioSeek(-10);
+  }, [handleAudioSeek]);
 
   useEffect(() => {
     const finishedSub = SoundPlayer.addEventListener('FinishedPlaying', () => {
@@ -304,6 +400,7 @@ export const MusicScreen = () => {
         setCurrentAudioId(audio.id);
         SoundPlayer.playUrl(audio.audio_url);
         setIsAudioPlaying(true);
+        setSeekValue(0);
         startAudioProgressTracking();
       }
     } catch (error) {
@@ -568,6 +665,8 @@ export const MusicScreen = () => {
     const isCurrentAudio = currentAudioId === item.id;
     const isPlaying = isCurrentAudio && isAudioPlaying;
     const isLoading = isCurrentAudio && audioLoading;
+    const isTitleExpanded = expandedTitles.has(item.id);
+    const isDescriptionExpanded = expandedDescriptions.has(item.id);
 
     const animValue = animationRefs.current[item.id] || new Animated.Value(0);
     const scale = animValue.interpolate({
@@ -619,14 +718,26 @@ export const MusicScreen = () => {
           </Animated.View>
 
           <View style={styles.audioInfo}>
-            <Text style={styles.audioTitle} numberOfLines={1}>
-              {item.title}
-            </Text>
+            {/* Description Accordion */}
             {item.description ? (
-              <Text style={styles.audioDescription} numberOfLines={2}>
-                {item.description}
-              </Text>
+              <TouchableOpacity
+                style={styles.accordionItem}
+                onPress={() => toggleDescriptionExpanded(item.id)}
+                activeOpacity={0.7}>
+                <View style={styles.accordionContent}>
+                  <Text style={styles.audioDescription} numberOfLines={isDescriptionExpanded ? undefined : 2}>
+                    {item.description}
+                  </Text>
+                </View>
+                <Icon
+                  name={isDescriptionExpanded ? 'chevron-up' : 'chevron-down'}
+                  size={14}
+                  color={colors.textMuted}
+                  style={styles.expandIcon}
+                />
+              </TouchableOpacity>
             ) : null}
+            
             <Text style={styles.audioDate}>{formatDate(item.uploaded_date)}</Text>
           </View>
 
@@ -653,14 +764,65 @@ export const MusicScreen = () => {
           </View>
         </View>
 
+        {/* Title Accordion - Separated from Header */}
+        <TouchableOpacity
+          style={styles.titleAccordionContainer}
+          onPress={() => toggleTitleExpanded(item.id)}
+          activeOpacity={0.7}>
+          <View style={styles.accordionContent}>
+            <Text style={styles.audioTitle} numberOfLines={isTitleExpanded ? undefined : 1}>
+              {item.title}
+            </Text>
+          </View>
+          <Icon
+            name={isTitleExpanded ? 'chevron-up' : 'chevron-down'}
+            size={14}
+            color={colors.textMuted}
+            style={styles.expandIcon}
+          />
+        </TouchableOpacity>
+
         {isCurrentAudio && (
           <View style={styles.audioProgressContainer}>
-            <View style={styles.audioProgressBar}>
-              <View style={[styles.audioProgressFill, { width: `${progress * 100}%` }]} />
-            </View>
-            <View style={styles.audioTimeContainer}>
-              <Text style={styles.audioTime}>{formatTime(audioPosition)}</Text>
-              <Text style={styles.audioTime}>{formatTime(audioDuration)}</Text>
+            <View style={styles.audioControlsRow}>
+              <TouchableOpacity
+                style={styles.audioSeekButton}
+                onPress={handleAudioBackward}
+                disabled={audioLoading || audioDuration === 0}>
+                <Icon name="backward" size={14} color={audioDuration === 0 ? colors.textMuted : colors.text} />
+                <Text style={[styles.audioSeekText, audioDuration === 0 && styles.audioSeekTextDisabled]}>10s</Text>
+              </TouchableOpacity>
+              
+              <View style={styles.sliderContainer}>
+                <Slider
+                  style={styles.slider}
+                  value={isSeeking ? seekValue : audioPosition}
+                  minimumValue={0}
+                  maximumValue={audioDuration || 1}
+                  minimumTrackTintColor={colors.primary}
+                  maximumTrackTintColor={colors.border}
+                  thumbTintColor={colors.primary}
+                  onSlidingStart={() => setIsSeeking(true)}
+                  onValueChange={(value) => setSeekValue(value)}
+                  onSlidingComplete={(value) => {
+                    setIsSeeking(false);
+                    handleSeekToPosition(value);
+                  }}
+                  disabled={audioLoading || audioDuration === 0}
+                />
+                <View style={styles.audioTimeContainer}>
+                  <Text style={styles.audioTime}>{formatTime(isSeeking ? seekValue : audioPosition)}</Text>
+                  <Text style={styles.audioTime}>{formatTime(audioDuration)}</Text>
+                </View>
+              </View>
+
+              <TouchableOpacity
+                style={styles.audioSeekButton}
+                onPress={handleAudioForward}
+                disabled={audioLoading || audioDuration === 0}>
+                <Icon name="forward" size={14} color={audioDuration === 0 ? colors.textMuted : colors.text} />
+                <Text style={[styles.audioSeekText, audioDuration === 0 && styles.audioSeekTextDisabled]}>10s</Text>
+              </TouchableOpacity>
             </View>
           </View>
         )}
@@ -960,23 +1122,46 @@ const styles = StyleSheet.create({
   audioInfo: {
     flex: 1,
   },
+  accordionItem: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 8,
+  },
+  accordionContent: {
+    flex: 1,
+    marginRight: 8,
+  },
   audioTitle: {
     fontSize: 16,
     fontFamily: fonts.heading,
     color: colors.text,
     fontWeight: '600',
-    marginBottom: 4,
+    textAlign: 'left',
   },
   audioDescription: {
     fontSize: 14,
     fontFamily: fonts.body,
     color: colors.textMuted,
-    marginBottom: 4,
+    textAlign: 'left',
+  },
+  expandIcon: {
+    marginTop: 2,
+    alignSelf: 'flex-start',
   },
   audioDate: {
     fontSize: 12,
     fontFamily: fonts.body,
     color: colors.textMuted,
+    textAlign: 'left',
+    marginTop: 4,
+  },
+  titleAccordionContainer: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+    marginBottom: 12,
+    paddingTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
   },
   audioActions: {
     flexDirection: 'row',
@@ -989,20 +1174,42 @@ const styles = StyleSheet.create({
   audioProgressContainer: {
     marginBottom: 12,
   },
-  audioProgressBar: {
-    height: 4,
-    backgroundColor: colors.border,
-    borderRadius: 2,
-    overflow: 'hidden',
-    marginBottom: 8,
+  audioControlsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
   },
-  audioProgressFill: {
-    height: '100%',
-    backgroundColor: colors.primary,
+  audioSeekButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 4,
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    backgroundColor: colors.cardMuted,
+    minWidth: 60,
+  },
+  audioSeekText: {
+    fontSize: 11,
+    fontFamily: fonts.body,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  audioSeekTextDisabled: {
+    color: colors.textMuted,
+  },
+  sliderContainer: {
+    flex: 1,
+  },
+  slider: {
+    width: '100%',
+    height: 40,
   },
   audioTimeContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    marginTop: 4,
   },
   audioTime: {
     fontSize: 12,
