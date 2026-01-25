@@ -5,8 +5,10 @@ import {
   Animated,
   FlatList,
   Modal,
+  Platform,
   RefreshControl,
   ScrollView,
+  Share,
   StyleSheet,
   Text,
   TextInput,
@@ -24,6 +26,7 @@ import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { AudioService, type Audio } from '../services/audio';
+import { BASE_URL } from '../config/api';
 
 const { width: SCREEN_WIDTH } = Dimensions.get('window');
 
@@ -449,6 +452,70 @@ export const MusicScreen = () => {
     }
   };
 
+  const generateAudioDeepLink = (audioId: string): string => {
+    // Generate deep link for audio
+    // Format: mykuttam://audio/:id
+    return `mykuttam://audio/${audioId}`;
+  };
+
+  const generateAudioWebUrl = (audioId: string): string => {
+    // Generate web URL for sharing (more compatible with messaging apps)
+    // Backend serves HTML pages at GET /audio/:id (not /api/audio/:id)
+    // This endpoint includes Open Graph tags for rich link previews
+    // Always use BASE_URL from environment variable
+    if (!BASE_URL) {
+      return '';
+    }
+    
+    // Remove /api from BASE_URL if present (web endpoint is at root level)
+    let baseUrl = BASE_URL;
+    if (baseUrl.endsWith('/api')) {
+      baseUrl = baseUrl.slice(0, -4);
+    }
+    // Ensure no trailing slash
+    baseUrl = baseUrl.replace(/\/$/, '');
+    
+    return `${baseUrl}/audio/${audioId}`;
+  };
+
+  const handleShareAudio = async (audio: Audio) => {
+    try {
+      const deepLink = generateAudioDeepLink(audio.id);
+      const webUrl = generateAudioWebUrl(audio.id);
+      
+      // Format like Instagram - URL first, then description
+      // This helps messaging apps recognize it as a link and show preview
+      const description = audio.description || `Check out "${audio.title}" from the music gallery`;
+      const message = `${webUrl}\n\n${description}`;
+      
+      // For iOS, use url property for better link preview support
+      // For Android, put URL at the start of message for better recognition
+      const shareContent = Platform.OS === 'ios' 
+        ? {
+            url: webUrl, // iOS: URL property helps with link preview
+            message: description,
+            title: 'Music Audio',
+          }
+        : {
+            message: message, // Android: URL in message for better recognition
+            title: 'Music Audio',
+          };
+
+      const result = await Share.share(shareContent);
+      if (result.action === Share.sharedAction) {
+        // Share was successful
+      } else if (result.action === Share.dismissedAction) {
+        // Share was dismissed
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Share failed',
+        text2: error instanceof Error ? error.message : 'Unable to share audio',
+      });
+    }
+  };
+
   const handleDelete = (audio: Audio) => {
     Alert.alert(
       'Delete Audio',
@@ -563,20 +630,27 @@ export const MusicScreen = () => {
             <Text style={styles.audioDate}>{formatDate(item.uploaded_date)}</Text>
           </View>
 
-          {isAdmin && (
-            <View style={styles.audioActions}>
-              <TouchableOpacity
-                onPress={() => handleEdit(item)}
-                style={styles.actionButton}>
-                <Icon name="edit" size={16} color={colors.primary} />
-              </TouchableOpacity>
-              <TouchableOpacity
-                onPress={() => handleDelete(item)}
-                style={styles.actionButton}>
-                <Icon name="trash" size={16} color={colors.danger} />
-              </TouchableOpacity>
-            </View>
-          )}
+          <View style={styles.audioActions}>
+            <TouchableOpacity
+              onPress={() => handleShareAudio(item)}
+              style={styles.actionButton}>
+              <Icon name="share" size={16} color={colors.primary} />
+            </TouchableOpacity>
+            {isAdmin && (
+              <>
+                <TouchableOpacity
+                  onPress={() => handleEdit(item)}
+                  style={styles.actionButton}>
+                  <Icon name="edit" size={16} color={colors.primary} />
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleDelete(item)}
+                  style={styles.actionButton}>
+                  <Icon name="trash" size={16} color={colors.danger} />
+                </TouchableOpacity>
+              </>
+            )}
+          </View>
         </View>
 
         {isCurrentAudio && (

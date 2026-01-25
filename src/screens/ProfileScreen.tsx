@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet,
   Text,
@@ -11,6 +11,9 @@ import {
   Modal,
   TouchableWithoutFeedback,
   TouchableOpacity,
+  FlatList,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -22,14 +25,15 @@ import {
   type MediaType,
 } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import RBSheet from 'react-native-raw-bottom-sheet';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { useAuth } from '../context/AuthContext';
 import { AppTextInput } from '../components/AppTextInput';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { RootStackParamList } from '../navigation/AppNavigator';
-import { UserService } from '../services/user';
-import { UserRole } from '../types/user';
+import { UserService, type User } from '../services/user';
+import { UserRole, AccountStatus, AccountType } from '../types/user';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
 
@@ -51,6 +55,22 @@ export const ProfileScreen = () => {
     roles: [] as UserRole[],
   });
   const [updatingRole, setUpdatingRole] = useState(false);
+  
+  // Users list modal state
+  const [showUsersModal, setShowUsersModal] = useState(false);
+  const [users, setUsers] = useState<User[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [refreshingUsers, setRefreshingUsers] = useState(false);
+  const [usersPage, setUsersPage] = useState(1);
+  const [hasMoreUsers, setHasMoreUsers] = useState(true);
+  const [totalUsersCount, setTotalUsersCount] = useState(0);
+  const [usersFilters, setUsersFilters] = useState<{
+    status?: AccountStatus;
+    account_type?: AccountType;
+    role?: UserRole;
+  }>({});
+  const [expandedAddressUserId, setExpandedAddressUserId] = useState<string | null>(null);
+  const usersSheetRef = useRef<any>(null);
 
   const [formData, setFormData] = useState({
     name: currentUser?.name || '',
@@ -217,6 +237,122 @@ export const ProfileScreen = () => {
   const isAdmin = () => {
     if (!currentUser) return false;
     return currentUser.role && currentUser.role.includes('ADMIN');
+  };
+
+  // Check if current user is ADMIN or SUB_ADMIN
+  const isAdminOrSubAdmin = () => {
+    if (!currentUser) return false;
+    return currentUser.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+  };
+
+  // Fetch users with pagination and filters
+  const fetchUsers = async (page: number = 1, append: boolean = false) => {
+    try {
+      if (page === 1) {
+        setLoadingUsers(true);
+      } else {
+        setRefreshingUsers(true);
+      }
+
+      const response = await UserService.getUsers({
+        page,
+        limit: 10,
+        ...usersFilters,
+      });
+
+      if (response.success && response.data) {
+        if (append) {
+          setUsers((prev) => [...prev, ...response.data!.users]);
+        } else {
+          setUsers(response.data.users);
+        }
+
+        const totalPages = response.data.pagination?.totalPages || 0;
+        const total = response.data.pagination?.total || 0;
+        setHasMoreUsers(page < totalPages);
+        setUsersPage(page);
+        setTotalUsersCount(total);
+      }
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'Failed to fetch users',
+      );
+      if (!append) {
+        setUsers([]);
+      }
+      setHasMoreUsers(false);
+    } finally {
+      setLoadingUsers(false);
+      setRefreshingUsers(false);
+    }
+  };
+
+  // Handle users modal open
+  const handleOpenUsersModal = () => {
+    setUsersPage(1);
+    setHasMoreUsers(true);
+    setUsersFilters({});
+    setExpandedAddressUserId(null);
+    setTotalUsersCount(0);
+    if (usersSheetRef.current) {
+      usersSheetRef.current.open();
+    }
+    fetchUsers(1, false);
+  };
+
+  // Handle filter change
+  const handleFilterChange = async (filterType: 'status' | 'account_type' | 'role', value?: string) => {
+    const newFilters = { ...usersFilters };
+    if (value) {
+      newFilters[filterType] = value as any;
+    } else {
+      delete newFilters[filterType];
+    }
+    setUsersFilters(newFilters);
+    setUsersPage(1);
+    setHasMoreUsers(true);
+    setLoadingUsers(true);
+
+    try {
+      const response = await UserService.getUsers({
+        page: 1,
+        limit: 10,
+        ...newFilters,
+      });
+
+      if (response.success && response.data) {
+        setUsers(response.data.users);
+        const totalPages = response.data.pagination?.totalPages || 0;
+        const total = response.data.pagination?.total || 0;
+        setHasMoreUsers(1 < totalPages);
+        setUsersPage(1);
+        setTotalUsersCount(total);
+      }
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'Failed to fetch users',
+      );
+      setUsers([]);
+      setHasMoreUsers(false);
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  // Load more users
+  const handleLoadMoreUsers = () => {
+    if (!loadingUsers && hasMoreUsers) {
+      fetchUsers(usersPage + 1, true);
+    }
+  };
+
+  // Refresh users
+  const handleRefreshUsers = () => {
+    setUsersPage(1);
+    setHasMoreUsers(true);
+    fetchUsers(1, false);
   };
 
   // Available roles for selection
@@ -751,7 +887,281 @@ export const ProfileScreen = () => {
         </View>
       </Modal>
 
-      {/* Floating Action Button - Only visible to ADMIN */}
+      {/* Users List Bottom Sheet */}
+      <RBSheet
+        ref={usersSheetRef}
+        height={600}
+        openDuration={250}
+        customStyles={{
+          container: {
+            borderTopLeftRadius: 20,
+            borderTopRightRadius: 20,
+            backgroundColor: colors.card,
+          },
+          wrapper: {
+            backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          },
+        }}
+        onClose={() => {
+          setExpandedAddressUserId(null);
+        }}>
+        <View style={styles.bottomSheetContent}>
+          <View style={styles.bottomSheetHeader}>
+            <Text style={styles.bottomSheetTitle}>
+              All Users{totalUsersCount > 0 ? ` (${totalUsersCount})` : ''}
+            </Text>
+            <TouchableOpacity
+              onPress={() => {
+                if (usersSheetRef.current) {
+                  usersSheetRef.current.close();
+                }
+              }}
+              style={styles.bottomSheetCloseButton}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}>
+              <Icon name="times" size={20} color={colors.text} />
+            </TouchableOpacity>
+          </View>
+
+          {/* Filters */}
+          <View style={styles.filtersContainer}>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersScroll}>
+                      <TouchableOpacity
+                        style={[
+                          styles.filterChip,
+                          !usersFilters.status && styles.filterChipActive,
+                        ]}
+                        onPress={() => handleFilterChange('status')}>
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            !usersFilters.status && styles.filterChipTextActive,
+                          ]}>
+                          All Status
+                        </Text>
+                      </TouchableOpacity>
+                      {(['ACTIVE', 'SUSPENDED', 'BLOCK'] as AccountStatus[]).map((status) => (
+                        <TouchableOpacity
+                          key={status}
+                          style={[
+                            styles.filterChip,
+                            usersFilters.status === status && styles.filterChipActive,
+                          ]}
+                          onPress={() => handleFilterChange('status', status)}>
+                          <Text
+                            style={[
+                              styles.filterChipText,
+                              usersFilters.status === status && styles.filterChipTextActive,
+                            ]}>
+                            {status}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersScroll}>
+                      <TouchableOpacity
+                        style={[
+                          styles.filterChip,
+                          !usersFilters.account_type && styles.filterChipActive,
+                        ]}
+                        onPress={() => handleFilterChange('account_type')}>
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            !usersFilters.account_type && styles.filterChipTextActive,
+                          ]}>
+                          All Types
+                        </Text>
+                      </TouchableOpacity>
+                      {(['COMMON', 'MANAGEMENT'] as AccountType[]).map((type) => (
+                        <TouchableOpacity
+                          key={type}
+                          style={[
+                            styles.filterChip,
+                            usersFilters.account_type === type && styles.filterChipActive,
+                          ]}
+                          onPress={() => handleFilterChange('account_type', type)}>
+                          <Text
+                            style={[
+                              styles.filterChipText,
+                              usersFilters.account_type === type && styles.filterChipTextActive,
+                            ]}>
+                            {type}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.filtersScroll}>
+                      <TouchableOpacity
+                        style={[
+                          styles.filterChip,
+                          !usersFilters.role && styles.filterChipActive,
+                        ]}
+                        onPress={() => handleFilterChange('role')}>
+                        <Text
+                          style={[
+                            styles.filterChipText,
+                            !usersFilters.role && styles.filterChipTextActive,
+                          ]}>
+                          All Roles
+                        </Text>
+                      </TouchableOpacity>
+                      {availableRoles.map((role) => (
+                        <TouchableOpacity
+                          key={role}
+                          style={[
+                            styles.filterChip,
+                            usersFilters.role === role && styles.filterChipActive,
+                          ]}
+                          onPress={() => handleFilterChange('role', role)}>
+                          <Text
+                            style={[
+                              styles.filterChipText,
+                              usersFilters.role === role && styles.filterChipTextActive,
+                            ]}>
+                            {role}
+                          </Text>
+                        </TouchableOpacity>
+                      ))}
+                    </ScrollView>
+                  </View>
+
+          {/* Users List */}
+          {loadingUsers && users.length === 0 ? (
+            <View style={styles.usersLoadingContainer}>
+              <ActivityIndicator size="large" color={colors.primary} />
+            </View>
+          ) : (
+            <View style={{ flex: 1 }}>
+              <FlatList
+                data={users}
+                keyExtractor={(item) => item.id}
+                style={styles.usersFlatList}
+                renderItem={({ item }) => (
+                        <View style={styles.userCard}>
+                          <View style={styles.userCardHeader}>
+                            {item.avatar ? (
+                              <Image source={{ uri: item.avatar }} style={styles.userAvatar} />
+                            ) : (
+                              <View style={styles.userAvatarPlaceholder}>
+                                <Icon name="user" size={20} color={colors.textMuted} />
+                              </View>
+                            )}
+                            <View style={styles.userCardInfo}>
+                              <Text style={styles.userCardName}>{item.name}</Text>
+                              <Text style={styles.userCardPhone}>{item.phone}</Text>
+                            </View>
+                            <View
+                              style={[
+                                styles.userStatusBadge,
+                                item.status === 'ACTIVE' && styles.userStatusBadgeActive,
+                                item.status === 'SUSPENDED' && styles.userStatusBadgeSuspended,
+                                item.status === 'BLOCK' && styles.userStatusBadgeBlock,
+                              ]}>
+                              <Text
+                                style={[
+                                  styles.userStatusText,
+                                  item.status === 'ACTIVE' && styles.userStatusTextActive,
+                                ]}>
+                                {item.status}
+                              </Text>
+                            </View>
+                          </View>
+                          <View style={styles.userCardDetails}>
+                            <View style={styles.userDetailRow}>
+                              <Icon name="briefcase" size={14} color={colors.textMuted} />
+                              <Text style={styles.userDetailText}>{item.account_type}</Text>
+                            </View>
+                            <View style={styles.userDetailRow}>
+                              <Icon name="shield" size={14} color={colors.textMuted} />
+                              <Text style={styles.userDetailText}>
+                                {item.role.join(', ')}
+                              </Text>
+                            </View>
+                            {item.report_count > 0 && (
+                              <View style={styles.userDetailRow}>
+                                <Icon name="exclamation-triangle" size={14} color={colors.danger} />
+                                <Text style={[styles.userDetailText, styles.userReportCount]}>
+                                  {item.report_count} report{item.report_count !== 1 ? 's' : ''}
+                                </Text>
+                              </View>
+                            )}
+                          </View>
+                          
+                          {/* Address Accordion */}
+                          {item.address && (
+                            <View style={styles.addressAccordionContainer}>
+                              <TouchableOpacity
+                                style={styles.addressAccordionHeader}
+                                onPress={() => {
+                                  setExpandedAddressUserId(
+                                    expandedAddressUserId === item.id ? null : item.id
+                                  );
+                                }}
+                                activeOpacity={0.7}>
+                                <View style={styles.addressAccordionHeaderContent}>
+                                  <Icon name="map-marker" size={14} color={colors.primary} />
+                                  <Text style={styles.addressAccordionTitle}>Address</Text>
+                                </View>
+                                <Icon
+                                  name={expandedAddressUserId === item.id ? 'chevron-up' : 'chevron-down'}
+                                  size={14}
+                                  color={colors.textMuted}
+                                />
+                              </TouchableOpacity>
+                              {expandedAddressUserId === item.id && (
+                                <View style={styles.addressAccordionContent}>
+                                  <Text style={styles.addressText}>{item.address}</Text>
+                                </View>
+                              )}
+                            </View>
+                          )}
+                        </View>
+                      )}
+                contentContainerStyle={styles.usersListContent}
+                onEndReached={handleLoadMoreUsers}
+                onEndReachedThreshold={0.5}
+                refreshControl={
+                  <RefreshControl
+                    refreshing={refreshingUsers}
+                    onRefresh={handleRefreshUsers}
+                    tintColor={colors.primary}
+                  />
+                }
+                ListFooterComponent={
+                  loadingUsers && users.length > 0 ? (
+                    <View style={styles.usersFooterLoader}>
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    </View>
+                  ) : null
+                }
+                ListEmptyComponent={
+                  !loadingUsers ? (
+                    <View style={styles.usersEmptyContainer}>
+                      <Icon name="users" size={48} color={colors.textMuted} />
+                      <Text style={styles.usersEmptyText}>No users found</Text>
+                      <Text style={styles.usersEmptySubtext}>
+                        Try adjusting your filters
+                      </Text>
+                    </View>
+                  ) : null
+                }
+              />
+            </View>
+          )}
+        </View>
+      </RBSheet>
+
+      {/* Floating Action Buttons - Only visible to ADMIN/SUB_ADMIN */}
+      {isAdminOrSubAdmin() && (
+        <>
+          {/* View Users Button */}
+          <TouchableOpacity
+            style={[styles.fab, styles.fabUsers]}
+            onPress={handleOpenUsersModal}
+            activeOpacity={0.8}>
+            <Icon name="users" size={24} color="#fff" />
+          </TouchableOpacity>
+          {/* Update Role Button - Only visible to ADMIN */}
       {isAdmin() && (
         <TouchableOpacity
           style={styles.fab}
@@ -759,6 +1169,8 @@ export const ProfileScreen = () => {
           activeOpacity={0.8}>
           <Icon name="user-plus" size={24} color="#fff" />
         </TouchableOpacity>
+          )}
+        </>
       )}
     </SafeAreaView>
   );
@@ -1276,4 +1688,263 @@ const styles = StyleSheet.create({
     elevation: 8,
     zIndex: 1000,
   },
+  fabUsers: {
+    bottom: 90, // Position above the role update button
+  },
+  // Bottom Sheet Styles (matching comments modal)
+  bottomSheetContent: {
+    flex: 1,
+    flexDirection: 'column',
+  },
+  bottomSheetHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingTop: 8,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    flexShrink: 0, // Prevent header from shrinking
+  },
+  bottomSheetTitle: {
+    flex: 1,
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    fontWeight: '600',
+    color: colors.text,
+  },
+  bottomSheetCloseButton: {
+    padding: 4,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  // Users List Styles
+  usersListContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    paddingTop: 20,
+    paddingBottom: 0,
+    maxHeight: '90%',
+    width: '100%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+    elevation: 10,
+    flex: 1,
+  },
+  filtersContainer: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    gap: 12,
+    flexShrink: 0, // Prevent filters from shrinking - they should be fixed height
+  },
+  filtersScroll: {
+    marginVertical: 4,
+  },
+  filterChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  filterChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  filterChipText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  filterChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  usersListContent: {
+    paddingHorizontal: 16,
+    paddingTop: 16,
+    paddingBottom: 16,
+  },
+  usersLoadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+  },
+  usersFooterLoader: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  usersEmptyContainer: {
+    paddingVertical: 60,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  usersEmptyText: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: colors.text,
+    marginTop: 16,
+    fontWeight: '600',
+  },
+  usersEmptySubtext: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+    marginTop: 8,
+  },
+  userCard: {
+    backgroundColor: colors.card,
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  userCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  userAvatar: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+    backgroundColor: colors.cardMuted,
+  },
+  userAvatarPlaceholder: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    marginRight: 12,
+    backgroundColor: colors.cardMuted,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  userCardInfo: {
+    flex: 1,
+  },
+  userCardName: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
+    marginBottom: 4,
+  },
+  userCardPhone: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.textMuted,
+  },
+  userStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 12,
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  userStatusBadgeActive: {
+    backgroundColor: colors.primary + '15',
+    borderColor: colors.primary,
+  },
+  userStatusBadgeSuspended: {
+    backgroundColor: '#FFA50015',
+    borderColor: '#FFA500',
+  },
+  userStatusBadgeBlock: {
+    backgroundColor: colors.danger + '15',
+    borderColor: colors.danger,
+  },
+  userStatusText: {
+    fontFamily: fonts.body,
+    fontSize: 11,
+    color: colors.textMuted,
+    fontWeight: '600',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  userStatusTextActive: {
+    color: colors.primary,
+  },
+  userCardDetails: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  userDetailRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  userDetailText: {
+    fontFamily: fonts.body,
+    fontSize: 13,
+    color: colors.text,
+  },
+  userReportCount: {
+    color: colors.danger,
+    fontWeight: '600',
+  },
+  // Address Accordion Styles
+  addressAccordionContainer: {
+    marginTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    paddingTop: 12,
+  },
+  addressAccordionHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 8,
+    paddingHorizontal: 4,
+  },
+  addressAccordionHeaderContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  addressAccordionTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  addressAccordionContent: {
+    paddingTop: 8,
+    paddingHorizontal: 4,
+    paddingBottom: 4,
+  },
+  addressText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    lineHeight: 20,
+  },
+  usersFlatList: {
+    flex: 1,
+  },
+  // Remove unused showUsersModal state - we're using RBSheet now
 });

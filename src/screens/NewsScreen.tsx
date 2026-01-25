@@ -181,6 +181,9 @@ export const NewsScreen = () => {
 
   // Video reveal state to lazy load players
   const [revealedVideos, setRevealedVideos] = useState<Set<string>>(new Set());
+  const [currentVideoId, setCurrentVideoId] = useState<string | null>(null);
+  const videoRefs = useRef<Record<string, any>>({});
+  const videoSwitchHandledRef = useRef<string | null>(null);
 
   // Track current image index for each news item with multiple images
   const [currentImageIndices, setCurrentImageIndices] = useState<Record<string, number>>({});
@@ -313,6 +316,9 @@ export const NewsScreen = () => {
       }
       stopAudioProgressInterval();
       resetAudioProgress();
+      // Clean up video refs and switch tracking to prevent memory leaks
+      videoRefs.current = {};
+      videoSwitchHandledRef.current = null;
     };
   }, [resetAudioProgress, stopAudioProgressInterval]);
 
@@ -1094,6 +1100,13 @@ export const NewsScreen = () => {
 
     try {
       setAudioLoading(true);
+      
+      // Pause any currently playing video when audio starts
+      if (currentVideoId) {
+        setCurrentVideoId(null); // This will pause all videos via paused prop
+        videoSwitchHandledRef.current = null;
+      }
+      
       if (currentAudioId === news.id) {
         if (isAudioPlaying) {
           SoundPlayer.pause();
@@ -1517,6 +1530,23 @@ export const NewsScreen = () => {
     if (!newsId) {
       return;
     }
+    
+    // Stop any currently playing audio when video is revealed
+    if (isAudioPlaying && currentAudioId) {
+      try {
+        SoundPlayer.stop();
+        setIsAudioPlaying(false);
+        stopAudioProgressInterval();
+        resetAudioProgress();
+        setCurrentAudioId(null);
+      } catch (error) {
+        // Ignore errors
+      }
+    }
+    
+    // Set current video ID (paused prop will handle pausing previous videos)
+    setCurrentVideoId(newsId);
+    videoSwitchHandledRef.current = newsId;
     setRevealedVideos((prev) => {
       if (prev.has(newsId)) {
         return prev;
@@ -1525,16 +1555,21 @@ export const NewsScreen = () => {
       newSet.add(newsId);
       return newSet;
     });
-  }, []);
+  }, [isAudioPlaying, currentAudioId, stopAudioProgressInterval, resetAudioProgress]);
 
   const handleCloseHighlightModal = useCallback(() => {
     if (selectedHighlightNews && currentAudioId === selectedHighlightNews.id) {
       stopAudioPlayback();
     }
+    // Pause video if it's the current one
+    if (selectedHighlightNews && currentVideoId === selectedHighlightNews.id) {
+      setCurrentVideoId(null);
+      videoSwitchHandledRef.current = null;
+    }
     setShowHighlightModal(false);
     setSelectedHighlightNews(null);
     setHighlightModalImageIndex(0);
-  }, [currentAudioId, selectedHighlightNews, stopAudioPlayback]);
+  }, [currentAudioId, currentVideoId, selectedHighlightNews, stopAudioPlayback]);
 
   const generateNewsDeepLink = (newsId: string): string => {
     // Generate deep link for news item
@@ -2074,11 +2109,55 @@ export const NewsScreen = () => {
           <View style={styles.videoContainer}>
             {isVideoRevealed ? (
               <Video
+                ref={(ref) => {
+                  if (ref) {
+                    videoRefs.current[item.id] = ref;
+                  }
+                }}
                 source={{ uri: item.media_src }}
                 style={styles.videoPlayer}
                 controls
                 resizeMode="contain"
                 poster={item.media_src}
+                paused={currentVideoId !== item.id}
+                onLoadStart={() => {
+                  // When video starts loading, update current video and stop audio
+                  if (currentVideoId !== item.id) {
+                    // Stop any playing audio
+                    if (isAudioPlaying && currentAudioId) {
+                      try {
+                        SoundPlayer.stop();
+                        setIsAudioPlaying(false);
+                        stopAudioProgressInterval();
+                        resetAudioProgress();
+                        setCurrentAudioId(null);
+                      } catch (error) {
+                        // Ignore errors
+                      }
+                    }
+                    setCurrentVideoId(item.id);
+                  }
+                }}
+                onProgress={(data) => {
+                  // Detect when video is playing (progress > 0) and update current video
+                  // Only update once per video switch to avoid unnecessary state updates
+                  if (data.currentTime > 0 && currentVideoId !== item.id && videoSwitchHandledRef.current !== item.id) {
+                    videoSwitchHandledRef.current = item.id;
+                    // Stop any playing audio
+                    if (isAudioPlaying && currentAudioId) {
+                      try {
+                        SoundPlayer.stop();
+                        setIsAudioPlaying(false);
+                        stopAudioProgressInterval();
+                        resetAudioProgress();
+                        setCurrentAudioId(null);
+                      } catch (error) {
+                        // Ignore errors
+                      }
+                    }
+                    setCurrentVideoId(item.id);
+                  }
+                }}
                 onError={(error) => handleMediaError('Unable to play this video.', error)}
               />
             ) : (
@@ -2811,10 +2890,54 @@ export const NewsScreen = () => {
                 <View style={styles.modalVideoContainer}>
                   {selectedHighlightNews.id && revealedVideos.has(selectedHighlightNews.id) ? (
                     <Video
+                      ref={(ref) => {
+                        if (ref && selectedHighlightNews.id) {
+                          videoRefs.current[selectedHighlightNews.id] = ref;
+                        }
+                      }}
                       source={{ uri: selectedHighlightNews.media_src }}
                       style={styles.modalVideoPlayer}
                       controls
                       resizeMode="contain"
+                      paused={currentVideoId !== selectedHighlightNews.id}
+                      onLoadStart={() => {
+                        // When video starts loading, update current video and stop audio
+                        if (selectedHighlightNews.id && currentVideoId !== selectedHighlightNews.id) {
+                          // Stop any playing audio
+                          if (isAudioPlaying && currentAudioId) {
+                            try {
+                              SoundPlayer.stop();
+                              setIsAudioPlaying(false);
+                              stopAudioProgressInterval();
+                              resetAudioProgress();
+                              setCurrentAudioId(null);
+                            } catch (error) {
+                              // Ignore errors
+                            }
+                          }
+                          setCurrentVideoId(selectedHighlightNews.id);
+                        }
+                      }}
+                      onProgress={(data) => {
+                        // Detect when video is playing (progress > 0) and update current video
+                        // Only update once per video switch to avoid unnecessary state updates
+                        if (selectedHighlightNews.id && data.currentTime > 0 && currentVideoId !== selectedHighlightNews.id && videoSwitchHandledRef.current !== selectedHighlightNews.id) {
+                          videoSwitchHandledRef.current = selectedHighlightNews.id;
+                          // Stop any playing audio
+                          if (isAudioPlaying && currentAudioId) {
+                            try {
+                              SoundPlayer.stop();
+                              setIsAudioPlaying(false);
+                              stopAudioProgressInterval();
+                              resetAudioProgress();
+                              setCurrentAudioId(null);
+                            } catch (error) {
+                              // Ignore errors
+                            }
+                          }
+                          setCurrentVideoId(selectedHighlightNews.id);
+                        }
+                      }}
                       onError={(error) => handleMediaError('Unable to play this highlight video.', error)}
                     />
                   ) : (
