@@ -31,7 +31,7 @@ import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { BASE_URL } from '../config/api';
-import { GalleryService, type GalleryImage, type GalleryStatus } from '../services/gallery';
+import { GalleryService, type GalleryImage, type GalleryStatus, type GalleryCategory } from '../services/gallery';
 import {
   getStoredGalleryImages,
   saveGalleryImagesToRealm,
@@ -53,11 +53,24 @@ export const GalleryScreen = () => {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [selectedImageUri, setSelectedImageUri] = useState<string | null>(null);
   const [uploadDescription, setUploadDescription] = useState('');
+  const [uploadCategoryId, setUploadCategoryId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [isOnline, setIsOnline] = useState(true);
   const [showFullscreenImage, setShowFullscreenImage] = useState(false);
   const isFetchingRef = useRef(false);
   const hasShownOfflineToastRef = useRef(false);
+  const [categories, setCategories] = useState<GalleryCategory[]>([]);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const categoriesScrollRef = useRef<ScrollView>(null);
+  const [showCategoryManageModal, setShowCategoryManageModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
+  const [showCategoryUpdateModal, setShowCategoryUpdateModal] = useState(false);
+  const [updatingImageCategory, setUpdatingImageCategory] = useState(false);
+  const [showUploadCategoryDropdown, setShowUploadCategoryDropdown] = useState(false);
+  const [showFriendsFamilyInfo, setShowFriendsFamilyInfo] = useState(false);
 
   const isAdmin = currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
 
@@ -131,7 +144,8 @@ export const GalleryScreen = () => {
         // For regular users, always use 'approved' (which maps to 'permitted' in API)
         // For admins, use the selected status
         const apiStatus = isAdmin ? status : 'approved';
-        const response = await GalleryService.getGalleryImages(pageNum, 10, apiStatus);
+        // Pass selected category (null means "All" - no filter)
+        const response = await GalleryService.getGalleryImages(pageNum, 10, apiStatus, selectedCategoryId);
 
         // Ensure we have valid response data
         const imagesData = response?.data?.images || [];
@@ -228,7 +242,7 @@ export const GalleryScreen = () => {
         setRefreshing(false);
       }
     },
-    [isAdmin, status],
+    [isAdmin, status, selectedCategoryId],
   );
 
   // Monitor network status
@@ -336,14 +350,148 @@ export const GalleryScreen = () => {
     }
   };
 
+  const fetchCategories = useCallback(async () => {
+    try {
+      setLoadingCategories(true);
+      const response = await GalleryService.getGalleryCategories();
+      if (response.success && response.data) {
+        setCategories(response.data);
+      }
+    } catch (error) {
+      // Silently fail - categories are optional
+      console.warn('Failed to fetch gallery categories:', error);
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, []);
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim() || creatingCategory) {
+      return;
+    }
+
+    try {
+      setCreatingCategory(true);
+      const response = await GalleryService.createCategory(newCategoryName.trim());
+      
+      if (response.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Category created successfully',
+          visibilityTime: 2000,
+        });
+        setNewCategoryName('');
+        // Refresh categories list
+        await fetchCategories();
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to create category',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = (categoryId: string, categoryName: string) => {
+    Alert.alert(
+      'Delete Category',
+      `Are you sure you want to delete "${categoryName}"? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingCategoryId(categoryId);
+              const response = await GalleryService.deleteCategory(categoryId);
+              
+              if (response.success) {
+                Toast.show({
+                  type: 'success',
+                  text1: 'Success',
+                  text2: 'Category deleted successfully',
+                  visibilityTime: 2000,
+                });
+                // Refresh categories list
+                await fetchCategories();
+                // If deleted category was selected, reset to "All"
+                if (selectedCategoryId === categoryId) {
+                  setSelectedCategoryId(null);
+                }
+              }
+            } catch (error) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error instanceof Error ? error.message : 'Failed to delete category',
+                visibilityTime: 3000,
+              });
+            } finally {
+              setDeletingCategoryId(null);
+            }
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  };
+
+  const handleUpdateImageCategory = async (categoryId: string | null) => {
+    if (!selectedImage) return;
+
+    try {
+      setUpdatingImageCategory(true);
+      const response = await GalleryService.updateImageCategory(selectedImage.id, categoryId);
+      
+      if (response.success && response.data) {
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Image category updated successfully',
+          visibilityTime: 2000,
+        });
+        // Update selected image with new category data
+        setSelectedImage(response.data);
+        // Refresh images list to reflect the change
+        if (isOnline) {
+          fetchImages(page, false);
+        }
+        setShowCategoryUpdateModal(false);
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to update image category',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setUpdatingImageCategory(false);
+    }
+  };
+
   useEffect(() => {
-    // Reset when status changes and fetch new images
+    // Fetch categories on mount
+    fetchCategories();
+  }, [fetchCategories]);
+
+  useEffect(() => {
+    // Reset when status or category changes and fetch new images
     setPage(1);
     setHasMore(true);
     setImages([]);
-    hasShownOfflineToastRef.current = false; // Reset toast flag on status change
+    hasShownOfflineToastRef.current = false; // Reset toast flag on status/category change
     fetchImages(1, false);
-  }, [status, fetchImages]);
+  }, [status, selectedCategoryId, fetchImages]);
 
   const handleRefresh = async () => {
     // Check network before refresh
@@ -573,7 +721,30 @@ export const GalleryScreen = () => {
     }
   };
 
-  const handleImagePicker = () => {
+  const handleCategorySelection = (categoryId: string) => {
+    setUploadCategoryId(categoryId);
+    setShowUploadCategoryDropdown(false);
+    
+    // Check if selected category is "Friends and Family" (case-insensitive, handles variations)
+    const selectedCategory = categories.find((c) => c.id === categoryId);
+    if (selectedCategory) {
+      const categoryName = selectedCategory.name.toLowerCase().trim();
+      // Check for various forms: "friends and family", "friends & family", "friendsandfamily", etc.
+      const isFriendsAndFamily = 
+        categoryName.includes('friends') && 
+        (categoryName.includes('family') || categoryName.includes('famil'));
+      
+      if (isFriendsAndFamily) {
+        setShowFriendsFamilyInfo(true);
+        // Auto-hide after 10 seconds
+        setTimeout(() => {
+          setShowFriendsFamilyInfo(false);
+        }, 10000);
+      }
+    }
+  };
+
+  const handleImagePicker = async () => {
     const options = {
       mediaType: 'photo' as MediaType,
       quality: 0.8 as const,
@@ -581,7 +752,7 @@ export const GalleryScreen = () => {
       maxHeight: 1920,
     };
 
-    launchImageLibrary(options, (response: ImagePickerResponse) => {
+    launchImageLibrary(options, async (response: ImagePickerResponse) => {
       if (response.didCancel) {
         return;
       }
@@ -595,6 +766,8 @@ export const GalleryScreen = () => {
       }
       if (response.assets && response.assets[0]) {
         setSelectedImageUri(response.assets[0].uri || null);
+        // Fetch categories when opening upload modal
+        await fetchCategories();
         setShowUploadModal(true);
       }
     });
@@ -602,6 +775,17 @@ export const GalleryScreen = () => {
 
   const handleUpload = async () => {
     if (!selectedImageUri) return;
+
+    // Validate category is selected
+    if (!uploadCategoryId) {
+      Toast.show({
+        type: 'error',
+        text1: 'Category Required',
+        text2: 'Please select a category for the image',
+        visibilityTime: 3000,
+      });
+      return;
+    }
 
     // Check network before upload
     const netInfo = await NetInfo.fetch();
@@ -620,7 +804,7 @@ export const GalleryScreen = () => {
     setUploading(true);
 
     try {
-      await GalleryService.uploadImage(selectedImageUri, uploadDescription);
+      await GalleryService.uploadImage(selectedImageUri, uploadCategoryId, uploadDescription);
       Toast.show({
         type: 'success',
         text1: 'Image Uploaded',
@@ -630,6 +814,7 @@ export const GalleryScreen = () => {
       // Reset form
       setSelectedImageUri(null);
       setUploadDescription('');
+      setUploadCategoryId(null);
       // Refresh images only if viewing review status (for admin) and online
       if (isAdmin && status === 'review' && isOnline) {
         fetchImages(1, false);
@@ -648,6 +833,18 @@ export const GalleryScreen = () => {
 
   const handleConfirmUpload = () => {
     if (!selectedImageUri) return;
+    
+    // Validate category is selected
+    if (!uploadCategoryId) {
+      Toast.show({
+        type: 'error',
+        text1: 'Category Required',
+        text2: 'Please select a category for the image',
+        visibilityTime: 3000,
+      });
+      return;
+    }
+    
     setShowUploadModal(false);
     setShowConfirmModal(true);
   };
@@ -766,6 +963,59 @@ export const GalleryScreen = () => {
         )}
       </View>
 
+      {/* Categories Row */}
+      {categories.length > 0 && (
+        <View style={styles.categoriesContainer}>
+          <ScrollView
+            ref={categoriesScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoriesScrollContent}
+            style={styles.categoriesScroll}>
+            {/* All Category Option */}
+            <TouchableOpacity
+              style={[
+                styles.categoryChip,
+                selectedCategoryId === null && styles.categoryChipActive,
+              ]}
+              onPress={() => setSelectedCategoryId(null)}
+              activeOpacity={0.7}>
+              <Text
+                style={[
+                  styles.categoryChipText,
+                  selectedCategoryId === null && styles.categoryChipTextActive,
+                ]}>
+                All
+              </Text>
+            </TouchableOpacity>
+
+            {/* Category Chips */}
+            {categories.map((category) => (
+              <TouchableOpacity
+                key={category.id}
+                style={[
+                  styles.categoryChip,
+                  selectedCategoryId === category.id && styles.categoryChipActive,
+                ]}
+                onPress={() => setSelectedCategoryId(category.id)}
+                activeOpacity={0.7}>
+                <Text
+                  style={[
+                    styles.categoryChipText,
+                    selectedCategoryId === category.id && styles.categoryChipTextActive,
+                  ]}>
+                  {category.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          {/* Right fade gradient */}
+          <View style={styles.categoriesFadeContainer} pointerEvents="none">
+            <View style={styles.categoriesFadeRight} />
+          </View>
+        </View>
+      )}
+
       <FlatList
         data={images}
         renderItem={renderImageItem}
@@ -820,6 +1070,18 @@ export const GalleryScreen = () => {
                     activeOpacity={0.7}>
                     <Icon name="share" size={16} color="#fff" />
                   </TouchableOpacity>
+                  {selectedImage && isAdmin && (
+                    <TouchableOpacity
+                      style={styles.updateCategoryButtonModal}
+                      onPress={() => {
+                        setShowCategoryUpdateModal(true);
+                        // Refresh categories when opening update modal
+                        fetchCategories();
+                      }}
+                      activeOpacity={0.7}>
+                      <Icon name="tags" size={16} color="#fff" />
+                    </TouchableOpacity>
+                  )}
                   {selectedImage && (isImageOwner(selectedImage) || isAdmin) && (
                     <TouchableOpacity
                       style={styles.deleteButtonModal}
@@ -881,6 +1143,17 @@ export const GalleryScreen = () => {
                     )}
                   </View>
 
+                  {/* Category Section */}
+                  {selectedImage.category && (
+                    <View style={styles.modalCategorySection}>
+                      <View style={styles.modalCategoryHeader}>
+                        <Icon name="tags" size={16} color={colors.primary} />
+                        <Text style={styles.modalInfoLabel}>Category</Text>
+                      </View>
+                      <Text style={styles.modalCategoryName}>{selectedImage.category.name}</Text>
+                    </View>
+                  )}
+
                   {/* Uploaded By Section */}
                   <View style={styles.modalUserSection}>
                     <View style={styles.modalUserHeader}>
@@ -914,6 +1187,9 @@ export const GalleryScreen = () => {
           setShowUploadModal(false);
           setSelectedImageUri(null);
           setUploadDescription('');
+          setUploadCategoryId(null);
+          setShowUploadCategoryDropdown(false);
+          setShowFriendsFamilyInfo(false);
         }}>
         <View style={styles.uploadModalOverlay}>
           <View style={styles.uploadModalContainer}>
@@ -924,12 +1200,19 @@ export const GalleryScreen = () => {
                   setShowUploadModal(false);
                   setSelectedImageUri(null);
                   setUploadDescription('');
+                  setUploadCategoryId(null);
+                  setShowUploadCategoryDropdown(false);
+                  setShowFriendsFamilyInfo(false);
                 }}>
                 <Icon name="times" size={20} color={colors.text} />
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.uploadModalContent}>
+            <ScrollView 
+              style={styles.uploadModalContent}
+              contentContainerStyle={styles.uploadModalContentContainer}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}>
               {selectedImageUri ? (
                 <Image source={{ uri: selectedImageUri }} style={styles.uploadPreviewImage} />
               ) : (
@@ -938,6 +1221,75 @@ export const GalleryScreen = () => {
                   <Text style={styles.uploadPlaceholderText}>Tap to select image</Text>
                 </Pressable>
               )}
+
+              <View style={styles.uploadForm}>
+                <Text style={styles.uploadLabel}>Category <Text style={styles.requiredAsterisk}>*</Text></Text>
+                {loadingCategories && categories.length === 0 ? (
+                  <View style={styles.uploadCategoryLoading}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                    <Text style={styles.uploadCategoryLoadingText}>Loading categories...</Text>
+                  </View>
+                ) : categories.length === 0 ? (
+                  <View style={styles.uploadCategoryEmpty}>
+                    <Text style={styles.uploadCategoryEmptyText}>No categories available</Text>
+                  </View>
+                ) : (
+                  <View style={styles.selectBoxContainer}>
+                    <Pressable
+                      style={styles.selectBox}
+                      onPress={() => setShowUploadCategoryDropdown(!showUploadCategoryDropdown)}
+                      android_ripple={{ color: colors.primary + '20' }}>
+                      <Text
+                        style={[
+                          styles.selectBoxText,
+                          !uploadCategoryId && styles.selectBoxPlaceholder,
+                        ]}>
+                        {uploadCategoryId
+                          ? categories.find((c) => c.id === uploadCategoryId)?.name || 'Select category'
+                          : 'Choose category'}
+                      </Text>
+                      <Icon
+                        name={showUploadCategoryDropdown ? 'chevron-up' : 'chevron-down'}
+                        size={16}
+                        color={colors.textMuted}
+                      />
+                    </Pressable>
+                    {showUploadCategoryDropdown && (
+                      <View style={styles.selectBoxDropdown}>
+                          <ScrollView
+                            style={styles.selectBoxDropdownScroll}
+                            nestedScrollEnabled={true}
+                            showsVerticalScrollIndicator={true}>
+                            {categories.map((category) => (
+                              <Pressable
+                                key={category.id}
+                                style={[
+                                  styles.selectBoxOption,
+                                  uploadCategoryId === category.id && styles.selectBoxOptionActive,
+                                ]}
+                                onPress={() => handleCategorySelection(category.id)}
+                                android_ripple={{ color: colors.primary + '20' }}>
+                                <Text
+                                  style={[
+                                    styles.selectBoxOptionText,
+                                    uploadCategoryId === category.id && styles.selectBoxOptionTextActive,
+                                  ]}>
+                                  {category.name}
+                                </Text>
+                                {uploadCategoryId === category.id && (
+                                  <Icon name="check" size={16} color={colors.primary} />
+                                )}
+                              </Pressable>
+                            ))}
+                          </ScrollView>
+                        </View>
+                    )}
+                  </View>
+                )}
+                {!uploadCategoryId && selectedImageUri && (
+                  <Text style={styles.uploadCategoryError}>Please select a category</Text>
+                )}
+              </View>
 
               <View style={styles.uploadForm}>
                 <Text style={styles.uploadLabel}>Description (Optional)</Text>
@@ -966,10 +1318,13 @@ export const GalleryScreen = () => {
               )}
               {selectedImageUri && (
                 <TouchableOpacity
-                  style={styles.uploadButton}
+                  style={[
+                    styles.uploadButton,
+                    (!uploadCategoryId || uploading) && styles.uploadButtonDisabled,
+                  ]}
                   onPress={handleConfirmUpload}
                   activeOpacity={0.7}
-                  disabled={uploading}>
+                  disabled={!uploadCategoryId || uploading}>
                   {uploading ? (
                     <ActivityIndicator size="small" color="#fff" />
                   ) : (
@@ -985,12 +1340,47 @@ export const GalleryScreen = () => {
         </View>
       </Modal>
 
+      {/* Friends and Family Info Modal */}
+      <Modal
+        visible={showFriendsFamilyInfo}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowFriendsFamilyInfo(false)}>
+        <Pressable
+          style={styles.infoModalOverlay}
+          onPress={() => setShowFriendsFamilyInfo(false)}>
+          <View
+            style={styles.infoModalContainer}
+            onStartShouldSetResponder={() => true}
+            onResponderTerminationRequest={() => false}>
+            <View style={styles.infoModalHeader}>
+              <Icon name="info-circle" size={24} color={colors.primary} />
+              <Text style={styles.infoModalTitle}>அனுமதி தேவை</Text>
+            </View>
+            <View style={styles.infoModalContent}>
+              <Text style={styles.infoModalText}>
+                உங்கள் நண்பர்கள் மற்றும் குடும்பத்தினரின் புகைப்படங்களை பதிவேற்றும் போது, அவர்களின் அனுமதி பெற்ற பிறகே பதிவேற்றவும்.
+              </Text>
+            </View>
+            <TouchableOpacity
+              style={styles.infoModalCloseButton}
+              onPress={() => setShowFriendsFamilyInfo(false)}
+              activeOpacity={0.7}>
+              <Text style={styles.infoModalCloseButtonText}>புரிந்துகொண்டேன்</Text>
+            </TouchableOpacity>
+          </View>
+        </Pressable>
+      </Modal>
+
       {/* Confirmation Modal */}
       <Modal
         visible={showConfirmModal}
         transparent
         animationType="fade"
-        onRequestClose={() => setShowConfirmModal(false)}>
+        onRequestClose={() => {
+          setShowConfirmModal(false);
+          setShowUploadModal(true);
+        }}>
         <View style={styles.confirmModalOverlay}>
           <View style={styles.confirmModalContainer}>
             <Text style={styles.confirmModalTitle}>Confirm Upload</Text>
@@ -1060,6 +1450,87 @@ export const GalleryScreen = () => {
         </Modal>
       )}
 
+      {/* Category Update Modal */}
+      <Modal
+        visible={showCategoryUpdateModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowCategoryUpdateModal(false)}>
+        <View style={styles.categoryUpdateModalOverlay}>
+          <View style={styles.categoryUpdateModalContainer}>
+            <View style={styles.categoryUpdateModalHeader}>
+              <Text style={styles.categoryUpdateModalTitle}>Update Category</Text>
+              <TouchableOpacity
+                onPress={() => setShowCategoryUpdateModal(false)}
+                disabled={updatingImageCategory}>
+                <Icon name="times" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.categoryUpdateModalContentContainer}>
+              <Text style={styles.categoryUpdateModalSubtitle}>
+                Select a category for this image
+              </Text>
+
+              {loadingCategories && categories.length === 0 ? (
+                <View style={styles.categoryUpdateLoading}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.categoryUpdateLoadingText}>Loading categories...</Text>
+                </View>
+              ) : (
+                <View style={styles.categoryUpdateChipsContainer}>
+                  <ScrollView
+                    horizontal
+                    showsHorizontalScrollIndicator={false}
+                    contentContainerStyle={styles.categoryUpdateChipsScrollContent}>
+                    {/* Remove Category Option */}
+                    <TouchableOpacity
+                      style={[
+                        styles.categoryUpdateChip,
+                        !selectedImage?.category && styles.categoryUpdateChipActive,
+                      ]}
+                      onPress={() => handleUpdateImageCategory(null)}
+                      disabled={updatingImageCategory}
+                      activeOpacity={0.7}>
+                      <Text
+                        style={[
+                          styles.categoryUpdateChipText,
+                          !selectedImage?.category && styles.categoryUpdateChipTextActive,
+                        ]}>
+                        Remove
+                      </Text>
+                    </TouchableOpacity>
+
+                    {/* Category Chips */}
+                    {categories.map((category) => (
+                      <TouchableOpacity
+                        key={category.id}
+                        style={[
+                          styles.categoryUpdateChip,
+                          selectedImage?.category?.id === category.id &&
+                            styles.categoryUpdateChipActive,
+                        ]}
+                        onPress={() => handleUpdateImageCategory(category.id)}
+                        disabled={updatingImageCategory}
+                        activeOpacity={0.7}>
+                        <Text
+                          style={[
+                            styles.categoryUpdateChipText,
+                            selectedImage?.category?.id === category.id &&
+                              styles.categoryUpdateChipTextActive,
+                          ]}>
+                          {category.name}
+                        </Text>
+                      </TouchableOpacity>
+                    ))}
+                  </ScrollView>
+                </View>
+              )}
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Floating Upload Button */}
       <TouchableOpacity
         style={styles.floatingButton}
@@ -1067,6 +1538,106 @@ export const GalleryScreen = () => {
         activeOpacity={0.8}>
         <Icon name="plus" size={24} color="#fff" />
       </TouchableOpacity>
+
+      {/* Floating Manage Categories Button (Admin/Sub-Admin only) */}
+      {isAdmin && (
+        <TouchableOpacity
+          style={styles.floatingManageButton}
+          onPress={async () => {
+            setShowCategoryManageModal(true);
+            // Refresh categories when opening modal
+            await fetchCategories();
+          }}
+          activeOpacity={0.8}>
+          <Icon name="tags" size={20} color="#fff" />
+        </TouchableOpacity>
+      )}
+
+      {/* Category Management Modal */}
+      <Modal
+        visible={showCategoryManageModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowCategoryManageModal(false);
+          setNewCategoryName('');
+        }}>
+        <View style={styles.categoryManageModalOverlay}>
+          <View style={styles.categoryManageModalContainer}>
+            <View style={styles.categoryManageModalHeader}>
+              <Text style={styles.categoryManageModalTitle}>Manage Categories</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCategoryManageModal(false);
+                  setNewCategoryName('');
+                }}>
+                <Icon name="times" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.categoryManageModalContent}>
+              {/* Add Category Section */}
+              <View style={styles.addCategorySection}>
+                <View style={styles.addCategoryRow}>
+                  <TextInput
+                    style={styles.addCategoryInput}
+                    placeholder="Enter category name"
+                    placeholderTextColor={colors.textMuted}
+                    value={newCategoryName}
+                    onChangeText={setNewCategoryName}
+                    maxLength={50}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.addCategoryButton,
+                      (!newCategoryName.trim() || creatingCategory) && styles.addCategoryButtonDisabled,
+                    ]}
+                    onPress={handleCreateCategory}
+                    disabled={!newCategoryName.trim() || creatingCategory}
+                    activeOpacity={0.7}>
+                    {creatingCategory ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.addCategoryButtonText}>Add</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Categories List */}
+              <View style={styles.categoriesListSection}>
+                <Text style={styles.categoriesListTitle}>Categories</Text>
+                {loadingCategories && categories.length === 0 ? (
+                  <View style={styles.categoriesListLoading}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  </View>
+                ) : categories.length === 0 ? (
+                  <View style={styles.categoriesListEmpty}>
+                    <Text style={styles.categoriesListEmptyText}>No categories yet</Text>
+                  </View>
+                ) : (
+                  categories.map((category) => (
+                    <View key={category.id} style={styles.categoryListItem}>
+                      <Text style={styles.categoryListItemName}>{category.name}</Text>
+                      <TouchableOpacity
+                        style={styles.categoryDeleteButton}
+                        onPress={() => handleDeleteCategory(category.id, category.name)}
+                        disabled={deletingCategoryId === category.id}
+                        activeOpacity={0.7}>
+                        {deletingCategoryId === category.id ? (
+                          <ActivityIndicator size="small" color={colors.danger} />
+                        ) : (
+                          <Icon name="trash" size={18} color={colors.danger} />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+            </ScrollView>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -1115,6 +1686,57 @@ const styles = StyleSheet.create({
   toggleButtonTextActive: {
     color: '#fff',
     fontWeight: '600',
+  },
+  categoriesContainer: {
+    position: 'relative',
+    paddingVertical: 12,
+    paddingLeft: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  categoriesScroll: {
+    flexGrow: 0,
+  },
+  categoriesScrollContent: {
+    paddingRight: 20,
+    gap: 8,
+  },
+  categoryChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  categoryChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  categoryChipText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  categoryChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  categoriesFadeContainer: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 30,
+    flexDirection: 'row',
+  },
+  categoriesFadeRight: {
+    flex: 1,
+    backgroundColor: colors.background,
+    opacity: 0.98,
   },
   listContent: {
     padding: 10,
@@ -1391,7 +2013,8 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '90%',
-    paddingBottom: 20,
+    flex: 1,
+    flexDirection: 'column',
   },
   uploadModalHeader: {
     flexDirection: 'row',
@@ -1407,7 +2030,11 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   uploadModalContent: {
+    flex: 1,
+  },
+  uploadModalContentContainer: {
     padding: 20,
+    paddingBottom: 30,
   },
   uploadPreviewImage: {
     width: '100%',
@@ -1459,6 +2086,10 @@ const styles = StyleSheet.create({
   uploadModalFooter: {
     paddingHorizontal: 20,
     paddingTop: 10,
+    paddingBottom: 20,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+    backgroundColor: colors.card,
   },
   uploadSelectButton: {
     flexDirection: 'row',
@@ -1488,6 +2119,139 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     fontSize: 16,
     color: '#fff',
+    fontWeight: '600',
+  },
+  uploadButtonDisabled: {
+    backgroundColor: colors.textMuted,
+    opacity: 0.6,
+  },
+  requiredAsterisk: {
+    color: colors.danger,
+    fontSize: 14,
+  },
+  uploadCategoryLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  uploadCategoryLoadingText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  uploadCategoryEmpty: {
+    paddingVertical: 12,
+  },
+  uploadCategoryEmptyText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+  },
+  uploadCategoryScroll: {
+    maxHeight: 60,
+  },
+  uploadCategoryScrollContent: {
+    gap: 8,
+    paddingVertical: 4,
+  },
+  uploadCategoryChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  uploadCategoryChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  uploadCategoryChipText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  uploadCategoryChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  uploadCategoryError: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.danger,
+    marginTop: 4,
+    fontStyle: 'italic',
+  },
+  selectBoxContainer: {
+    position: 'relative',
+    zIndex: 10,
+  },
+  selectBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minHeight: 48,
+  },
+  selectBoxText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  selectBoxPlaceholder: {
+    color: colors.textMuted,
+  },
+  selectBoxDropdown: {
+    position: 'absolute',
+    top: '100%',
+    left: 0,
+    right: 0,
+    marginTop: 4,
+    backgroundColor: colors.card,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    maxHeight: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 10,
+    zIndex: 1000,
+    overflow: 'visible',
+  },
+  selectBoxDropdownScroll: {
+    maxHeight: 200,
+  },
+  selectBoxOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  selectBoxOptionActive: {
+    backgroundColor: colors.cardMuted,
+  },
+  selectBoxOptionText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  selectBoxOptionTextActive: {
+    color: colors.primary,
     fontWeight: '600',
   },
   confirmModalOverlay: {
@@ -1581,5 +2345,332 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
     zIndex: 10,
+  },
+  floatingManageButton: {
+    position: 'absolute',
+    bottom: 90,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  categoryManageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  categoryManageModalContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  categoryManageModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryManageModalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  categoryManageModalContent: {
+    padding: 20,
+  },
+  addCategorySection: {
+    marginBottom: 24,
+  },
+  addCategoryRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  addCategoryInput: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  addCategoryButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  addCategoryButtonDisabled: {
+    backgroundColor: colors.textMuted,
+    opacity: 0.5,
+  },
+  addCategoryButtonText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  categoriesListSection: {
+    marginTop: 8,
+  },
+  categoriesListTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  categoriesListLoading: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  categoriesListEmpty: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  categoriesListEmptyText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  categoryListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  categoryListItemName: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  categoryDeleteButton: {
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  updateCategoryButtonModal: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalCategorySection: {
+    marginBottom: 20,
+  },
+  modalCategoryHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  modalCategoryName: {
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '500',
+    padding: 12,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    borderLeftWidth: 3,
+    borderLeftColor: colors.primary,
+  },
+  categoryUpdateModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  categoryUpdateModalContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '70%',
+    paddingBottom: 20,
+    overflow: 'visible',
+  },
+  categoryUpdateModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryUpdateModalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  categoryUpdateModalContent: {
+    flex: 1,
+  },
+  categoryUpdateModalContentContainer: {
+    padding: 20,
+  },
+  categoryUpdateModalSubtitle: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+    marginBottom: 16,
+  },
+  categoryUpdateLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 20,
+    justifyContent: 'center',
+  },
+  categoryUpdateLoadingText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  categoryUpdateOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 14,
+    paddingHorizontal: 16,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  categoryUpdateOptionActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  categoryUpdateOptionText: {
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  categoryUpdateOptionTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  categoryUpdateChipsContainer: {
+    marginTop: 12,
+  },
+  categoryUpdateChipsScrollContent: {
+    paddingRight: 20,
+    gap: 8,
+  },
+  categoryUpdateChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    borderRadius: 20,
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  categoryUpdateChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  categoryUpdateChipText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  categoryUpdateChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  infoModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.7)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  infoModalContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    width: '100%',
+    maxWidth: 400,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 10,
+    overflow: 'hidden',
+  },
+  infoModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    padding: 20,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.cardMuted,
+  },
+  infoModalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    color: colors.text,
+    fontWeight: '600',
+    flex: 1,
+  },
+  infoModalContent: {
+    padding: 20,
+  },
+  infoModalText: {
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.text,
+    lineHeight: 24,
+    textAlign: 'left',
+  },
+  infoModalCloseButton: {
+    backgroundColor: colors.primary,
+    paddingVertical: 14,
+    paddingHorizontal: 24,
+    margin: 20,
+    marginTop: 0,
+    borderRadius: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  infoModalCloseButtonText: {
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: '#fff',
+    fontWeight: '600',
   },
 });

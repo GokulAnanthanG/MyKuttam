@@ -20,8 +20,11 @@ export const endpoints = {
   forgotPasswordReset: `${BASE_URL}/api/registration/forgot-password/reset`,
   gallery: `${BASE_URL}/api/gallery`,
   updateGalleryStatus: (id: string) => `${BASE_URL}/api/gallery/${id}/status`,
+  updateGalleryCategory: (id: string) => `${BASE_URL}/api/gallery/${id}/category`,
   deleteGalleryImage: (id: string) => `${BASE_URL}/api/gallery/${id}`,
   uploadGalleryImage: `${BASE_URL}/api/gallery/upload`,
+  galleryCategories: `${BASE_URL}/api/gallery-categories`,
+  galleryCategoryById: (id: string) => `${BASE_URL}/api/gallery-categories/${id}`,
   // News endpoints
   news: `${BASE_URL}/api/news`,
   newsById: (id: string) => `${BASE_URL}/api/news/${id}`,

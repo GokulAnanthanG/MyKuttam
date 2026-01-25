@@ -30,7 +30,7 @@ import {
   type ImagePickerResponse,
   type MediaType as PickerMediaType,
 } from 'react-native-image-picker';
-import DocumentPicker from 'react-native-document-picker';
+import { pick, types, errorCodes, isErrorWithCode, keepLocalCopy } from '@react-native-documents/picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Toast from 'react-native-toast-message';
 import { useAuth } from '../context/AuthContext';
@@ -1148,13 +1148,10 @@ export const NewsScreen = () => {
     // For audio files, use document picker
     if (createMediaType === 'AUDIO') {
       try {
-        const result = await DocumentPicker.pick({
-          type: [DocumentPicker.types.audio],
-          copyTo: 'cachesDirectory',
+        const [file] = await pick({
+          type: [types.audio],
         });
 
-        const file = Array.isArray(result) ? result[0] : result;
-        
         if (!file) {
           return;
         }
@@ -1171,17 +1168,34 @@ export const NewsScreen = () => {
           return;
         }
 
+        // Keep a local copy in caches directory (equivalent to old copyTo option)
+        let fileUri = file.uri;
+        if (file.name) {
+          try {
+            const [localCopy] = await keepLocalCopy({
+              files: [{ uri: file.uri, fileName: file.name }],
+              destination: 'cachesDirectory',
+            });
+            if (localCopy.status === 'success' && localCopy.localUri) {
+              fileUri = localCopy.localUri;
+            }
+          } catch (copyError) {
+            // If keepLocalCopy fails, use the original URI
+            console.warn('Failed to keep local copy, using original URI:', copyError);
+          }
+        }
+
         const fileName = file.name || `audio_${Date.now()}.${file.type?.split('/')[1] || 'mp3'}`;
         const mimeType = file.type || 'audio/mpeg';
 
         setSelectedMedia({
-          uri: file.uri,
+          uri: fileUri,
           type: mimeType,
           name: fileName,
           fileSize: file.size || undefined,
         });
       } catch (error: any) {
-        if (DocumentPicker.isCancel(error)) {
+        if (isErrorWithCode(error) && error.code === errorCodes.OPERATION_CANCELED) {
           // User cancelled
           return;
         }
@@ -1212,80 +1226,110 @@ export const NewsScreen = () => {
     }
 
     launchImageLibrary(options, (response: ImagePickerResponse) => {
-      if (response.didCancel) {
-        return;
-      }
+      try {
+        if (response.didCancel) {
+          return;
+        }
 
-      if (response.errorCode) {
-        Toast.show({
-          type: 'error',
-          text1: 'Error',
-          text2: response.errorMessage || 'Failed to select media',
-          visibilityTime: 3000,
-        });
-        return;
-      }
-
-      const assets = response.assets;
-      if (!assets || assets.length === 0) {
-        return;
-      }
-
-      // Check file size (10MB = 10 * 1024 * 1024 bytes)
-      const maxSize = 10 * 1024 * 1024;
-      const validAssets = assets.filter(asset => {
-        if (asset.fileSize && asset.fileSize > maxSize) {
+        if (response.errorCode) {
           Toast.show({
             type: 'error',
-            text1: 'File Too Large',
-            text2: `${asset.fileName || 'File'} size must be less than 10MB`,
+            text1: 'Error',
+            text2: response.errorMessage || 'Failed to select media',
             visibilityTime: 3000,
           });
-          return false;
+          return;
         }
-        return true;
-      });
 
-      if (validAssets.length === 0) {
-        return;
-      }
+        const assets = response.assets;
+        if (!assets || assets.length === 0) {
+          return;
+        }
 
-      // For IMAGE type, allow multiple images
-      if (createMediaType === 'IMAGE') {
-        const mediaFiles = validAssets.map((asset, index) => {
-          if (!asset.uri) return null;
-          const fileExtension = asset.uri.split('.').pop() || '';
-          const fileName = asset.fileName || `media_${Date.now()}_${index}.${fileExtension}`;
-          const mimeType = asset.type || `image/jpeg`;
-          return {
-            uri: asset.uri,
-            type: mimeType,
-            name: fileName,
-            fileSize: asset.fileSize,
-          };
-        }).filter(Boolean) as { uri: string; type: string; name: string; fileSize?: number }[];
+        // Check file size (10MB = 10 * 1024 * 1024 bytes)
+        const maxSize = 10 * 1024 * 1024;
+        const validAssets = assets.filter(asset => {
+          try {
+            // Check if fileSize exists and is a valid number
+            if (asset.fileSize !== undefined && asset.fileSize !== null) {
+              const fileSize = typeof asset.fileSize === 'number' ? asset.fileSize : parseInt(String(asset.fileSize), 10);
+              
+              if (!isNaN(fileSize) && fileSize > maxSize) {
+                const fileName = asset.fileName || 'File';
+                const fileSizeMB = (fileSize / (1024 * 1024)).toFixed(2);
+                Toast.show({
+                  type: 'error',
+                  text1: 'File Too Large',
+                  text2: `${fileName} is ${fileSizeMB}MB. Please choose a file less than 10MB`,
+                  visibilityTime: 4000,
+                });
+                return false;
+              }
+            }
+            return true;
+          } catch (error) {
+            // If there's an error checking file size, show message to choose another file
+            console.warn('Error checking file size:', error);
+            Toast.show({
+              type: 'error',
+              text1: 'File Size Error',
+              text2: 'Unable to verify file size. Please choose a file less than 10MB',
+              visibilityTime: 4000,
+            });
+            return false;
+          }
+        });
 
-        // If there are existing images, append new ones
-        if (Array.isArray(selectedMedia)) {
-          setSelectedMedia([...selectedMedia, ...mediaFiles]);
+        if (validAssets.length === 0) {
+          return;
+        }
+
+        // For IMAGE type, allow multiple images
+        if (createMediaType === 'IMAGE') {
+          const mediaFiles = validAssets.map((asset, index) => {
+            if (!asset.uri) return null;
+            const fileExtension = asset.uri.split('.').pop() || '';
+            const fileName = asset.fileName || `media_${Date.now()}_${index}.${fileExtension}`;
+            const mimeType = asset.type || `image/jpeg`;
+            return {
+              uri: asset.uri,
+              type: mimeType,
+              name: fileName,
+              fileSize: asset.fileSize,
+            };
+          }).filter(Boolean) as { uri: string; type: string; name: string; fileSize?: number }[];
+
+          // If there are existing images, append new ones
+          if (Array.isArray(selectedMedia)) {
+            setSelectedMedia([...selectedMedia, ...mediaFiles]);
+          } else {
+            setSelectedMedia(mediaFiles.length === 1 ? mediaFiles[0] : mediaFiles);
+          }
         } else {
-          setSelectedMedia(mediaFiles.length === 1 ? mediaFiles[0] : mediaFiles);
-        }
-      } else {
-        // For VIDEO, only single selection
-        const asset = validAssets[0];
-        if (asset.uri) {
-          const fileExtension = asset.uri.split('.').pop() || '';
-          const fileName = asset.fileName || `media_${Date.now()}.${fileExtension}`;
-          const mimeType = asset.type || `application/octet-stream`;
+          // For VIDEO, only single selection
+          const asset = validAssets[0];
+          if (asset.uri) {
+            const fileExtension = asset.uri.split('.').pop() || '';
+            const fileName = asset.fileName || `media_${Date.now()}.${fileExtension}`;
+            const mimeType = asset.type || `application/octet-stream`;
 
-          setSelectedMedia({
-            uri: asset.uri,
-            type: mimeType,
-            name: fileName,
-            fileSize: asset.fileSize,
-          });
+            setSelectedMedia({
+              uri: asset.uri,
+              type: mimeType,
+              name: fileName,
+              fileSize: asset.fileSize,
+            });
+          }
         }
+      } catch (error) {
+        // Catch any unexpected errors and guide user to choose another file
+        console.error('Error processing selected media:', error);
+        Toast.show({
+          type: 'error',
+          text1: 'Selection Error',
+          text2: 'An error occurred. Please choose another file less than 10MB',
+          visibilityTime: 4000,
+        });
       }
     });
   };

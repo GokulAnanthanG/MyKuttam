@@ -12,6 +12,10 @@ export type GalleryImage = {
   };
   image_url: string;
   description: string;
+  category?: {
+    id: string;
+    name: string;
+  } | null;
   status: 'review' | 'permitted'; // API returns 'review' or 'permitted' (permitted = approved)
   uploaded_date: string;
   createdAt: string;
@@ -32,6 +36,19 @@ export type GalleryResponse = {
   };
 };
 
+export type GalleryCategory = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type GalleryCategoriesResponse = {
+  success: boolean;
+  message: string;
+  data: GalleryCategory[];
+};
+
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const { getStoredToken } = await import('../storage/userRealm');
   const token = await getStoredToken();
@@ -46,12 +63,25 @@ export const GalleryService = {
     page: number = 1,
     limit: number = 10,
     status: GalleryStatus = 'approved',
+    categoryId?: string | null,
   ): Promise<GalleryResponse> => {
     const headers = await getAuthHeaders();
     // Map 'approved' to 'permitted' for API
     const apiStatus = status === 'approved' ? 'permitted' : status;
+    
+    // Build query parameters
+    const queryParams = new URLSearchParams();
+    queryParams.append('page', String(page));
+    queryParams.append('limit', String(limit));
+    queryParams.append('status', apiStatus);
+    
+    // Add category filter only if provided (not null/undefined)
+    if (categoryId) {
+      queryParams.append('category', categoryId);
+    }
+    
     const response = await fetch(
-      `${endpoints.gallery}?page=${page}&limit=${limit}&status=${apiStatus}`,
+      `${endpoints.gallery}?${queryParams.toString()}`,
       {
         method: 'GET',
         headers,
@@ -141,6 +171,7 @@ export const GalleryService = {
 
   uploadImage: async (
     imageUri: string,
+    categoryId: string,
     description?: string,
   ): Promise<{ success: boolean; message: string }> => {
     const { getStoredToken } = await import('../storage/userRealm');
@@ -154,6 +185,9 @@ export const GalleryService = {
       type: 'image/jpeg',
       name: 'image.jpg',
     } as any);
+
+    // Add category (required)
+    formData.append('category', categoryId);
 
     // Add description if provided
     if (description && description.trim()) {
@@ -178,6 +212,97 @@ export const GalleryService = {
 
     if (!response.ok) {
       throw new Error(data.message || 'Failed to upload image');
+    }
+
+    return data;
+  },
+
+  getGalleryCategories: async (): Promise<GalleryCategoriesResponse> => {
+    // Public endpoint, no auth required
+    const response = await fetch(endpoints.galleryCategories, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const text = await response.text();
+    let data: GalleryCategoriesResponse;
+    
+    if (!text) {
+      data = {
+        success: false,
+        message: 'Empty response',
+        data: [],
+      };
+    } else {
+      data = JSON.parse(text) as GalleryCategoriesResponse;
+    }
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to fetch gallery categories');
+    }
+
+    return data;
+  },
+
+  createCategory: async (name: string): Promise<{ success: boolean; message: string; data?: GalleryCategory }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.galleryCategories, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: name.trim() }),
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string; data?: GalleryCategory })
+      : ({} as { success: boolean; message: string; data?: GalleryCategory });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to create gallery category');
+    }
+
+    return data;
+  },
+
+  deleteCategory: async (id: string): Promise<{ success: boolean; message: string }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.galleryCategoryById(id), {
+      method: 'DELETE',
+      headers,
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string })
+      : ({} as { success: boolean; message: string });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to delete gallery category');
+    }
+
+    return data;
+  },
+
+  updateImageCategory: async (
+    imageId: string,
+    categoryId: string | null,
+  ): Promise<{ success: boolean; message: string; data?: GalleryImage }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.updateGalleryCategory(imageId), {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ category: categoryId }),
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string; data?: GalleryImage })
+      : ({} as { success: boolean; message: string; data?: GalleryImage });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update gallery image category');
     }
 
     return data;
