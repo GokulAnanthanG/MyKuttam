@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, useRef } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Dimensions,
   FlatList,
   Image,
   Linking,
@@ -27,6 +28,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import Icon from 'react-native-vector-icons/FontAwesome';
 import Toast from 'react-native-toast-message';
 import { useNavigation } from '@react-navigation/native';
+import { ImageZoom } from '@likashefqet/react-native-image-zoom';
+import { gestureHandlerRootHOC } from 'react-native-gesture-handler';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -37,6 +40,42 @@ import {
   saveGalleryImagesToRealm,
 } from '../storage/galleryRealm';
 import { GallerySkeleton } from '../components/GallerySkeleton';
+
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
+// Wrapped component for Android modal support
+const ZoomableImageModal = gestureHandlerRootHOC(({ imageUrl, onClose }: { imageUrl: string; onClose: () => void }) => (
+  <View style={styles.fullscreenOverlay}>
+    <TouchableOpacity
+      style={styles.fullscreenCloseButton}
+      onPress={onClose}
+      activeOpacity={0.7}>
+      <Icon name="times" size={24} color="#fff" />
+    </TouchableOpacity>
+    <View style={styles.fullscreenImageContainer}>
+      <ImageZoom
+        uri={imageUrl}
+        minScale={1}
+        maxScale={5}
+        doubleTapScale={3}
+        isPanEnabled={true}
+        isPinchEnabled={true}
+        isSingleTapEnabled={true}
+        isDoubleTapEnabled={true}
+        onSingleTap={onClose}
+        style={styles.fullscreenImage}
+        resizeMode="contain"
+        onError={() => {
+          Toast.show({
+            type: 'error',
+            text1: 'Error',
+            text2: 'Failed to load image',
+          });
+        }}
+      />
+    </View>
+  </View>
+));
 
 export const GalleryScreen = () => {
   const { currentUser } = useAuth();
@@ -1420,33 +1459,10 @@ export const GalleryScreen = () => {
           transparent
           animationType="fade"
           onRequestClose={() => setShowFullscreenImage(false)}>
-          <Pressable
-            style={styles.fullscreenOverlay}
-            onPress={() => setShowFullscreenImage(false)}>
-            <View
-              style={styles.fullscreenImageContainer}
-              onStartShouldSetResponder={() => true}
-              onResponderTerminationRequest={() => false}>
-              <TouchableOpacity
-                style={styles.fullscreenCloseButton}
-                onPress={() => setShowFullscreenImage(false)}
-                activeOpacity={0.7}>
-                <Icon name="times" size={24} color="#fff" />
-              </TouchableOpacity>
-              <Image
-                source={{ uri: selectedImage.image_url }}
-                style={styles.fullscreenImage}
-                resizeMode="contain"
-                onError={(error) => {
-                  Toast.show({
-                    type: 'error',
-                    text1: 'Error',
-                    text2: 'Failed to load image',
-                  });
-                }}
-              />
-            </View>
-          </Pressable>
+          <ZoomableImageModal
+            imageUrl={selectedImage.image_url}
+            onClose={() => setShowFullscreenImage(false)}
+          />
         </Modal>
       )}
 
@@ -2324,6 +2340,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   fullscreenImageContainer: {
+    flex: 1,
     width: '100%',
     height: '100%',
     justifyContent: 'center',
@@ -2331,8 +2348,8 @@ const styles = StyleSheet.create({
     position: 'relative',
   },
   fullscreenImage: {
-    width: '100%',
-    height: '100%',
+    width: SCREEN_WIDTH,
+    height: SCREEN_HEIGHT,
   },
   fullscreenCloseButton: {
     position: 'absolute',

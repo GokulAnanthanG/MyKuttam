@@ -24,6 +24,8 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import RBSheet from 'react-native-raw-bottom-sheet';
 import Video from 'react-native-video';
 import SoundPlayer from 'react-native-sound-player';
+import { ImageZoom } from '@likashefqet/react-native-image-zoom';
+import { gestureHandlerRootHOC } from 'react-native-gesture-handler';
 import {
   launchImageLibrary,
   launchCamera,
@@ -133,6 +135,31 @@ const normalizeMediaSrc = (mediaSrc: string | string[] | undefined | null): stri
   }
   return [];
 };
+
+// Wrapped component for Android modal support - Single Image
+const ZoomableSingleImageModal = gestureHandlerRootHOC(({ imageUrl, onClose }: { imageUrl: string; onClose: () => void }) => (
+  <View style={styles.imageModalOverlay}>
+    <TouchableOpacity
+      style={styles.imageModalCloseButton}
+      onPress={onClose}
+      activeOpacity={0.8}>
+      <Icon name="times" size={24} color="#fff" />
+    </TouchableOpacity>
+    <ImageZoom
+      uri={imageUrl}
+      minScale={1}
+      maxScale={5}
+      doubleTapScale={3}
+      isPanEnabled={true}
+      isPinchEnabled={true}
+      isSingleTapEnabled={true}
+      isDoubleTapEnabled={true}
+      onSingleTap={onClose}
+      style={styles.imageModalImage}
+      resizeMode="contain"
+    />
+  </View>
+));
 
 export const NewsScreen = () => {
   const { currentUser } = useAuth();
@@ -3323,17 +3350,17 @@ export const NewsScreen = () => {
         transparent
         animationType="fade"
         onRequestClose={() => setImageModalVisible(false)}>
-        <View style={styles.imageModalOverlay}>
-          <TouchableOpacity
-            style={styles.imageModalCloseButton}
-            onPress={() => setImageModalVisible(false)}
-            activeOpacity={0.8}>
-            <Icon name="times" size={24} color="#fff" />
-          </TouchableOpacity>
-          
-          {selectedImageUrls.length > 1 ? (
-            // Multiple images - swipeable view
-            <>
+        {selectedImageUrls.length > 1 ? (
+          gestureHandlerRootHOC(() => (
+            <View style={styles.imageModalOverlay}>
+              <TouchableOpacity
+                style={styles.imageModalCloseButton}
+                onPress={() => setImageModalVisible(false)}
+                activeOpacity={0.8}>
+                <Icon name="times" size={24} color="#fff" />
+              </TouchableOpacity>
+              {/* Multiple images - swipeable view */}
+              <>
               <ScrollView
                 ref={imageModalScrollRef}
                 horizontal
@@ -3359,12 +3386,20 @@ export const NewsScreen = () => {
                 style={styles.imageModalScrollView}
                 contentContainerStyle={styles.imageModalScrollContent}>
                 {selectedImageUrls.map((imageUrl, index) => (
-                  <Image
-                    key={index}
-                    source={{ uri: getFullImageUrl(imageUrl) || imageUrl }}
-                    style={styles.imageModalImage}
-                    resizeMode="contain"
-                  />
+                  <View key={index} style={styles.imageModalImageContainer}>
+                    <ImageZoom
+                      uri={getFullImageUrl(imageUrl) || imageUrl}
+                      minScale={1}
+                      maxScale={5}
+                      doubleTapScale={3}
+                      isPanEnabled={true}
+                      isPinchEnabled={true}
+                      isSingleTapEnabled={false}
+                      isDoubleTapEnabled={true}
+                      style={styles.imageModalImage}
+                      resizeMode="contain"
+                    />
+                  </View>
                 ))}
               </ScrollView>
               
@@ -3414,17 +3449,17 @@ export const NewsScreen = () => {
                 </Text>
               </View>
             </>
-          ) : (
-            // Single image
-            selectedImageUri && (
-              <Image
-                source={{ uri: getFullImageUrl(selectedImageUri) || selectedImageUri }}
-                style={styles.imageModalImage}
-                resizeMode="contain"
-              />
-            )
-          )}
-        </View>
+            </View>
+          ))()
+        ) : (
+          // Single image
+          selectedImageUri && (
+            <ZoomableSingleImageModal
+              imageUrl={getFullImageUrl(selectedImageUri) || selectedImageUri}
+              onClose={() => setImageModalVisible(false)}
+            />
+          )
+        )}
       </Modal>
     </SafeAreaView>
   );
@@ -4711,9 +4746,15 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
+  imageModalImageContainer: {
+    width: Dimensions.get('window').width,
+    height: Dimensions.get('window').height,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   imageModalImage: {
     width: Dimensions.get('window').width,
-    height: '100%',
+    height: Dimensions.get('window').height,
   },
   imageModalScrollView: {
     flex: 1,
