@@ -6,6 +6,7 @@ import {
   FlatList,
   Modal,
   Platform,
+  Pressable,
   RefreshControl,
   ScrollView,
   Share,
@@ -26,10 +27,10 @@ import { pick, types, errorCodes, isErrorWithCode } from '@react-native-document
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
-import { AudioService, type Audio } from '../services/audio';
+import { AudioService, type Audio, type MusicCategory } from '../services/audio';
 import { BASE_URL } from '../config/api';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 const formatTime = (seconds: number): string => {
   const mins = Math.floor(seconds / 60);
@@ -68,6 +69,7 @@ export const MusicScreen = () => {
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadTitle, setUploadTitle] = useState('');
   const [uploadDescription, setUploadDescription] = useState('');
+  const [uploadCategoryId, setUploadCategoryId] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [selectedAudioUri, setSelectedAudioUri] = useState<string | null>(null);
 
@@ -76,7 +78,20 @@ export const MusicScreen = () => {
   const [editingAudio, setEditingAudio] = useState<Audio | null>(null);
   const [editTitle, setEditTitle] = useState('');
   const [editDescription, setEditDescription] = useState('');
+  const [editCategoryId, setEditCategoryId] = useState<string | null>(null);
   const [updating, setUpdating] = useState(false);
+
+  // Category state
+  const [categories, setCategories] = useState<MusicCategory[]>([]);
+  const [loadingCategories, setLoadingCategories] = useState(false);
+  const [selectedCategoryId, setSelectedCategoryId] = useState<string | null>(null);
+  const [showUploadCategoryDropdown, setShowUploadCategoryDropdown] = useState(false);
+  const [showEditCategoryDropdown, setShowEditCategoryDropdown] = useState(false);
+  const [showCategoryManageModal, setShowCategoryManageModal] = useState(false);
+  const [newCategoryName, setNewCategoryName] = useState('');
+  const [creatingCategory, setCreatingCategory] = useState(false);
+  const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
+  const categoriesScrollRef = useRef<ScrollView>(null);
 
   // Animation refs for playing state
   const animationRefs = useRef<Record<string, Animated.Value>>({});
@@ -299,7 +314,8 @@ export const MusicScreen = () => {
           setLoadingMore(true);
         }
 
-        const response = await AudioService.getAudios(pageNum, 10);
+        // Pass selected category (null means "All" - no filter)
+        const response = await AudioService.getAudios(pageNum, 10, selectedCategoryId);
 
         if (response.success && response.data) {
           const newAudios = response.data.audios || [];
@@ -337,12 +353,139 @@ export const MusicScreen = () => {
         isFetchingRef.current = false;
       }
     },
-    [],
+    [selectedCategoryId],
   );
 
   useEffect(() => {
     fetchAudios(1, false);
+    fetchCategories();
   }, [fetchAudios]);
+
+  // Refetch audios when category filter changes
+  useEffect(() => {
+    setAudios([]);
+    fetchAudios(1, false);
+  }, [selectedCategoryId, fetchAudios]);
+
+  const fetchCategories = useCallback(async () => {
+    try {
+      setLoadingCategories(true);
+      const response = await AudioService.getMusicCategories();
+      if (response.success && response.data) {
+        setCategories(response.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch music categories:', error);
+    } finally {
+      setLoadingCategories(false);
+    }
+  }, []);
+
+  // Set "My Kuttam" as default category when categories are loaded
+  useEffect(() => {
+    if (categories.length > 0 && selectedCategoryId === null) {
+      const myKuttamCategory = categories.find(
+        (cat) => cat.name.toLowerCase() === 'my kuttam'
+      );
+      if (myKuttamCategory) {
+        setSelectedCategoryId(myKuttamCategory.id);
+      }
+    }
+  }, [categories, selectedCategoryId]);
+
+  const handleCategorySelection = (categoryId: string | null) => {
+    if (showUploadModal) {
+      setUploadCategoryId(categoryId);
+      setShowUploadCategoryDropdown(false);
+    } else if (showEditModal) {
+      setEditCategoryId(categoryId);
+      setShowEditCategoryDropdown(false);
+    }
+  };
+
+  const handleCreateCategory = async () => {
+    if (!newCategoryName.trim() || creatingCategory) {
+      return;
+    }
+
+    try {
+      setCreatingCategory(true);
+      const response = await AudioService.createMusicCategory(newCategoryName.trim());
+      
+      if (response.success) {
+        Toast.show({
+          type: 'success',
+          text1: 'Success',
+          text2: 'Category created successfully',
+          visibilityTime: 2000,
+        });
+        setNewCategoryName('');
+        // Refresh categories list
+        await fetchCategories();
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to create category',
+        visibilityTime: 3000,
+      });
+    } finally {
+      setCreatingCategory(false);
+    }
+  };
+
+  const handleDeleteCategory = (categoryId: string, categoryName: string) => {
+    Alert.alert(
+      'Delete Category',
+      `Are you sure you want to delete "${categoryName}"? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              setDeletingCategoryId(categoryId);
+              const response = await AudioService.deleteMusicCategory(categoryId);
+              
+              if (response.success) {
+                Toast.show({
+                  type: 'success',
+                  text1: 'Success',
+                  text2: 'Category deleted successfully',
+                  visibilityTime: 2000,
+                });
+                // Refresh categories list
+                await fetchCategories();
+                // If deleted category was selected in upload, reset it
+                if (uploadCategoryId === categoryId) {
+                  setUploadCategoryId(null);
+                }
+                // If deleted category was selected in edit, reset it
+                if (editCategoryId === categoryId) {
+                  setEditCategoryId(null);
+                }
+              }
+            } catch (error) {
+              Toast.show({
+                type: 'error',
+                text1: 'Error',
+                text2: error instanceof Error ? error.message : 'Failed to delete category',
+                visibilityTime: 3000,
+              });
+            } finally {
+              setDeletingCategoryId(null);
+            }
+          },
+        },
+      ],
+      { cancelable: true },
+    );
+  };
 
   const handleRefresh = useCallback(() => {
     setRefreshing(true);
@@ -475,7 +618,12 @@ export const MusicScreen = () => {
 
     try {
       setUploading(true);
-      await AudioService.uploadAudio(selectedAudioUri, uploadTitle.trim(), uploadDescription.trim());
+      await AudioService.uploadAudio(
+        selectedAudioUri,
+        uploadTitle.trim(),
+        uploadDescription.trim(),
+        uploadCategoryId || undefined
+      );
       
       Toast.show({
         type: 'success',
@@ -488,6 +636,7 @@ export const MusicScreen = () => {
       setSelectedAudioUri(null);
       setUploadTitle('');
       setUploadDescription('');
+      setUploadCategoryId(null);
       fetchAudios(1, false);
     } catch (error) {
       Toast.show({
@@ -505,6 +654,7 @@ export const MusicScreen = () => {
     setEditingAudio(audio);
     setEditTitle(audio.title);
     setEditDescription(audio.description || '');
+    setEditCategoryId(audio.category?.id || null);
     setShowEditModal(true);
   };
 
@@ -523,7 +673,12 @@ export const MusicScreen = () => {
 
     try {
       setUpdating(true);
-      await AudioService.updateAudio(editingAudio.id, editTitle.trim(), editDescription.trim());
+      await AudioService.updateAudio(
+        editingAudio.id,
+        editTitle.trim(),
+        editDescription.trim(),
+        editCategoryId
+      );
       
       Toast.show({
         type: 'success',
@@ -536,6 +691,7 @@ export const MusicScreen = () => {
       setEditingAudio(null);
       setEditTitle('');
       setEditDescription('');
+      setEditCategoryId(null);
       fetchAudios(1, false);
     } catch (error) {
       Toast.show({
@@ -864,6 +1020,59 @@ export const MusicScreen = () => {
         </View>
       </View>
 
+      {/* Category Filter Chips */}
+      {categories.length > 0 && (
+        <View style={styles.categoriesContainer}>
+          <ScrollView
+            ref={categoriesScrollRef}
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={styles.categoriesScrollContent}
+            style={styles.categoriesScroll}>
+            {/* All Category Option */}
+            <TouchableOpacity
+              style={[
+                styles.categoryChip,
+                selectedCategoryId === null && styles.categoryChipActive,
+              ]}
+              onPress={() => setSelectedCategoryId(null)}
+              activeOpacity={0.7}>
+              <Text
+                style={[
+                  styles.categoryChipText,
+                  selectedCategoryId === null && styles.categoryChipTextActive,
+                ]}>
+                All
+              </Text>
+            </TouchableOpacity>
+
+            {/* Category Chips */}
+            {categories.map((category) => (
+              <TouchableOpacity
+                key={category.id}
+                style={[
+                  styles.categoryChip,
+                  selectedCategoryId === category.id && styles.categoryChipActive,
+                ]}
+                onPress={() => setSelectedCategoryId(category.id)}
+                activeOpacity={0.7}>
+                <Text
+                  style={[
+                    styles.categoryChipText,
+                    selectedCategoryId === category.id && styles.categoryChipTextActive,
+                  ]}>
+                  {category.name}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+          {/* Right fade gradient */}
+          <View style={styles.categoriesFadeContainer} pointerEvents="none">
+            <View style={styles.categoriesFadeRight} />
+          </View>
+        </View>
+      )}
+
       {loading && audios.length === 0 ? (
         <View style={styles.loadingContainer}>
           <ActivityIndicator size="large" color={colors.primary} />
@@ -940,6 +1149,40 @@ export const MusicScreen = () => {
                 numberOfLines={4}
                 textAlignVertical="top"
               />
+
+              <Text style={styles.inputLabel}>Category (Optional)</Text>
+              {loadingCategories && categories.length === 0 ? (
+                <View style={styles.categoryLoading}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.categoryLoadingText}>Loading categories...</Text>
+                </View>
+              ) : categories.length === 0 ? (
+                <View style={styles.categoryEmpty}>
+                  <Text style={styles.categoryEmptyText}>No categories available</Text>
+                </View>
+              ) : (
+                <View style={styles.selectBoxContainer}>
+                  <Pressable
+                    style={styles.selectBox}
+                    onPress={() => setShowUploadCategoryDropdown(!showUploadCategoryDropdown)}
+                    android_ripple={{ color: colors.primary + '20' }}>
+                    <Text
+                      style={[
+                        styles.selectBoxText,
+                        !uploadCategoryId && styles.selectBoxPlaceholder,
+                      ]}>
+                      {uploadCategoryId
+                        ? categories.find((c) => c.id === uploadCategoryId)?.name || 'Select category'
+                        : 'Choose category (Optional)'}
+                    </Text>
+                    <Icon
+                      name={showUploadCategoryDropdown ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color={colors.textMuted}
+                    />
+                  </Pressable>
+                </View>
+              )}
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -950,6 +1193,8 @@ export const MusicScreen = () => {
                   setSelectedAudioUri(null);
                   setUploadTitle('');
                   setUploadDescription('');
+                  setUploadCategoryId(null);
+                  setShowUploadCategoryDropdown(false);
                 }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
@@ -1004,6 +1249,40 @@ export const MusicScreen = () => {
                 numberOfLines={4}
                 textAlignVertical="top"
               />
+
+              <Text style={styles.inputLabel}>Category (Optional)</Text>
+              {loadingCategories && categories.length === 0 ? (
+                <View style={styles.categoryLoading}>
+                  <ActivityIndicator size="small" color={colors.primary} />
+                  <Text style={styles.categoryLoadingText}>Loading categories...</Text>
+                </View>
+              ) : categories.length === 0 ? (
+                <View style={styles.categoryEmpty}>
+                  <Text style={styles.categoryEmptyText}>No categories available</Text>
+                </View>
+              ) : (
+                <View style={styles.selectBoxContainer}>
+                  <Pressable
+                    style={styles.selectBox}
+                    onPress={() => setShowEditCategoryDropdown(!showEditCategoryDropdown)}
+                    android_ripple={{ color: colors.primary + '20' }}>
+                    <Text
+                      style={[
+                        styles.selectBoxText,
+                        !editCategoryId && styles.selectBoxPlaceholder,
+                      ]}>
+                      {editCategoryId
+                        ? categories.find((c) => c.id === editCategoryId)?.name || 'Select category'
+                        : 'Choose category (Optional)'}
+                    </Text>
+                    <Icon
+                      name={showEditCategoryDropdown ? 'chevron-up' : 'chevron-down'}
+                      size={16}
+                      color={colors.textMuted}
+                    />
+                  </Pressable>
+                </View>
+              )}
             </ScrollView>
 
             <View style={styles.modalFooter}>
@@ -1014,6 +1293,8 @@ export const MusicScreen = () => {
                   setEditingAudio(null);
                   setEditTitle('');
                   setEditDescription('');
+                  setEditCategoryId(null);
+                  setShowEditCategoryDropdown(false);
                 }}>
                 <Text style={styles.cancelButtonText}>Cancel</Text>
               </TouchableOpacity>
@@ -1028,6 +1309,240 @@ export const MusicScreen = () => {
                 )}
               </TouchableOpacity>
             </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Category Dropdown Modal for Upload */}
+      <Modal
+        visible={showUploadCategoryDropdown && showUploadModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowUploadCategoryDropdown(false)}>
+        <Pressable
+          style={styles.categoryDropdownModalOverlay}
+          onPress={() => setShowUploadCategoryDropdown(false)}>
+          <View style={styles.categoryDropdownModalContainer}>
+            <View style={styles.categoryDropdownHeader}>
+              <Text style={styles.categoryDropdownTitle}>Select Category</Text>
+              <TouchableOpacity
+                onPress={() => setShowUploadCategoryDropdown(false)}
+                style={styles.categoryDropdownCloseButton}>
+                <Icon name="times" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.categoryDropdownScrollView}
+              contentContainerStyle={styles.categoryDropdownContent}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}>
+              <Pressable
+                style={[
+                  styles.categoryDropdownOption,
+                  !uploadCategoryId && styles.categoryDropdownOptionActive,
+                ]}
+                onPress={() => handleCategorySelection(null)}
+                android_ripple={{ color: colors.primary + '20' }}>
+                <Text
+                  style={[
+                    styles.categoryDropdownOptionText,
+                    !uploadCategoryId && styles.categoryDropdownOptionTextActive,
+                  ]}>
+                  None
+                </Text>
+                {!uploadCategoryId && (
+                  <Icon name="check" size={18} color={colors.primary} />
+                )}
+              </Pressable>
+              {categories.map((category) => (
+                <Pressable
+                  key={category.id}
+                  style={[
+                    styles.categoryDropdownOption,
+                    uploadCategoryId === category.id && styles.categoryDropdownOptionActive,
+                  ]}
+                  onPress={() => handleCategorySelection(category.id)}
+                  android_ripple={{ color: colors.primary + '20' }}>
+                  <Text
+                    style={[
+                      styles.categoryDropdownOptionText,
+                      uploadCategoryId === category.id && styles.categoryDropdownOptionTextActive,
+                    ]}>
+                    {category.name}
+                  </Text>
+                  {uploadCategoryId === category.id && (
+                    <Icon name="check" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Category Dropdown Modal for Edit */}
+      <Modal
+        visible={showEditCategoryDropdown && showEditModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowEditCategoryDropdown(false)}>
+        <Pressable
+          style={styles.categoryDropdownModalOverlay}
+          onPress={() => setShowEditCategoryDropdown(false)}>
+          <View style={styles.categoryDropdownModalContainer}>
+            <View style={styles.categoryDropdownHeader}>
+              <Text style={styles.categoryDropdownTitle}>Select Category</Text>
+              <TouchableOpacity
+                onPress={() => setShowEditCategoryDropdown(false)}
+                style={styles.categoryDropdownCloseButton}>
+                <Icon name="times" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.categoryDropdownScrollView}
+              contentContainerStyle={styles.categoryDropdownContent}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}>
+              <Pressable
+                style={[
+                  styles.categoryDropdownOption,
+                  !editCategoryId && styles.categoryDropdownOptionActive,
+                ]}
+                onPress={() => handleCategorySelection(null)}
+                android_ripple={{ color: colors.primary + '20' }}>
+                <Text
+                  style={[
+                    styles.categoryDropdownOptionText,
+                    !editCategoryId && styles.categoryDropdownOptionTextActive,
+                  ]}>
+                  None
+                </Text>
+                {!editCategoryId && (
+                  <Icon name="check" size={18} color={colors.primary} />
+                )}
+              </Pressable>
+              {categories.map((category) => (
+                <Pressable
+                  key={category.id}
+                  style={[
+                    styles.categoryDropdownOption,
+                    editCategoryId === category.id && styles.categoryDropdownOptionActive,
+                  ]}
+                  onPress={() => handleCategorySelection(category.id)}
+                  android_ripple={{ color: colors.primary + '20' }}>
+                  <Text
+                    style={[
+                      styles.categoryDropdownOptionText,
+                      editCategoryId === category.id && styles.categoryDropdownOptionTextActive,
+                    ]}>
+                    {category.name}
+                  </Text>
+                  {editCategoryId === category.id && (
+                    <Icon name="check" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
+      </Modal>
+
+      {/* Floating Manage Categories Button (Admin/Sub-Admin only) */}
+      {isAdmin && (
+        <TouchableOpacity
+          style={styles.floatingManageButton}
+          onPress={async () => {
+            setShowCategoryManageModal(true);
+            // Refresh categories when opening modal
+            await fetchCategories();
+          }}
+          activeOpacity={0.8}>
+          <Icon name="tags" size={20} color="#fff" />
+        </TouchableOpacity>
+      )}
+
+      {/* Category Management Modal */}
+      <Modal
+        visible={showCategoryManageModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => {
+          setShowCategoryManageModal(false);
+          setNewCategoryName('');
+        }}>
+        <View style={styles.categoryManageModalOverlay}>
+          <View style={styles.categoryManageModalContainer}>
+            <View style={styles.categoryManageModalHeader}>
+              <Text style={styles.categoryManageModalTitle}>Manage Categories</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setShowCategoryManageModal(false);
+                  setNewCategoryName('');
+                }}>
+                <Icon name="times" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView style={styles.categoryManageModalContent}>
+              {/* Add Category Section */}
+              <View style={styles.addCategorySection}>
+                <View style={styles.addCategoryRow}>
+                  <TextInput
+                    style={styles.addCategoryInput}
+                    placeholder="Enter category name"
+                    placeholderTextColor={colors.textMuted}
+                    value={newCategoryName}
+                    onChangeText={setNewCategoryName}
+                    maxLength={50}
+                  />
+                  <TouchableOpacity
+                    style={[
+                      styles.addCategoryButton,
+                      (!newCategoryName.trim() || creatingCategory) && styles.addCategoryButtonDisabled,
+                    ]}
+                    onPress={handleCreateCategory}
+                    disabled={!newCategoryName.trim() || creatingCategory}
+                    activeOpacity={0.7}>
+                    {creatingCategory ? (
+                      <ActivityIndicator size="small" color="#fff" />
+                    ) : (
+                      <Text style={styles.addCategoryButtonText}>Add</Text>
+                    )}
+                  </TouchableOpacity>
+                </View>
+              </View>
+
+              {/* Categories List */}
+              <View style={styles.categoriesListSection}>
+                <Text style={styles.categoriesListTitle}>Categories</Text>
+                {loadingCategories && categories.length === 0 ? (
+                  <View style={styles.categoriesListLoading}>
+                    <ActivityIndicator size="small" color={colors.primary} />
+                  </View>
+                ) : categories.length === 0 ? (
+                  <View style={styles.categoriesListEmpty}>
+                    <Text style={styles.categoriesListEmptyText}>No categories yet</Text>
+                  </View>
+                ) : (
+                  categories.map((category) => (
+                    <View key={category.id} style={styles.categoryListItem}>
+                      <Text style={styles.categoryListItemName}>{category.name}</Text>
+                      <TouchableOpacity
+                        style={styles.categoryDeleteButton}
+                        onPress={() => handleDeleteCategory(category.id, category.name)}
+                        disabled={deletingCategoryId === category.id}
+                        activeOpacity={0.7}>
+                        {deletingCategoryId === category.id ? (
+                          <ActivityIndicator size="small" color={colors.danger} />
+                        ) : (
+                          <Icon name="trash" size={18} color={colors.danger} />
+                        )}
+                      </TouchableOpacity>
+                    </View>
+                  ))
+                )}
+              </View>
+            </ScrollView>
           </View>
         </View>
       </Modal>
@@ -1250,6 +1765,57 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: 60,
   },
+  categoriesContainer: {
+    position: 'relative',
+    paddingVertical: 12,
+    paddingLeft: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+    backgroundColor: colors.background,
+  },
+  categoriesScroll: {
+    flexGrow: 0,
+  },
+  categoriesScrollContent: {
+    paddingRight: 20,
+    gap: 8,
+  },
+  categoryChip: {
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: 20,
+    backgroundColor: colors.cardMuted,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginRight: 8,
+  },
+  categoryChipActive: {
+    backgroundColor: colors.primary,
+    borderColor: colors.primary,
+  },
+  categoryChipText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  categoryChipTextActive: {
+    color: '#fff',
+    fontWeight: '600',
+  },
+  categoriesFadeContainer: {
+    position: 'absolute',
+    right: 0,
+    top: 0,
+    bottom: 0,
+    width: 30,
+    flexDirection: 'row',
+  },
+  categoriesFadeRight: {
+    flex: 1,
+    backgroundColor: colors.background,
+    opacity: 0.98,
+  },
   emptyText: {
     fontSize: 16,
     fontFamily: fonts.body,
@@ -1358,6 +1924,244 @@ const styles = StyleSheet.create({
     fontFamily: fonts.body,
     color: '#fff',
     fontWeight: '600',
+  },
+  categoryLoading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+  },
+  categoryLoadingText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  categoryEmpty: {
+    paddingVertical: 12,
+  },
+  categoryEmptyText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+  },
+  selectBoxContainer: {
+    position: 'relative',
+    zIndex: 10,
+    marginBottom: 4,
+  },
+  selectBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+    minHeight: 48,
+  },
+  selectBoxText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+  },
+  selectBoxPlaceholder: {
+    color: colors.textMuted,
+  },
+  categoryDropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  categoryDropdownModalContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 24,
+  },
+  categoryDropdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryDropdownTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  categoryDropdownCloseButton: {
+    padding: 4,
+  },
+  categoryDropdownScrollView: {
+    maxHeight: SCREEN_HEIGHT * 0.6,
+  },
+  categoryDropdownContent: {
+    paddingBottom: 16,
+  },
+  categoryDropdownOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryDropdownOptionActive: {
+    backgroundColor: colors.cardMuted,
+  },
+  categoryDropdownOptionText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.text,
+  },
+  categoryDropdownOptionTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  floatingManageButton: {
+    position: 'absolute',
+    bottom: 90,
+    right: 20,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
+    backgroundColor: colors.accent,
+    justifyContent: 'center',
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  categoryManageModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'flex-end',
+  },
+  categoryManageModalContainer: {
+    backgroundColor: colors.card,
+    borderTopLeftRadius: 20,
+    borderTopRightRadius: 20,
+    maxHeight: '80%',
+    paddingBottom: 20,
+  },
+  categoryManageModalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryManageModalTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 20,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  categoryManageModalContent: {
+    padding: 20,
+  },
+  addCategorySection: {
+    marginBottom: 24,
+  },
+  addCategoryRow: {
+    flexDirection: 'row',
+    gap: 12,
+    alignItems: 'center',
+  },
+  addCategoryInput: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.text,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  addCategoryButton: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+    minWidth: 80,
+  },
+  addCategoryButtonDisabled: {
+    backgroundColor: colors.textMuted,
+    opacity: 0.5,
+  },
+  addCategoryButtonText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: '#fff',
+    fontWeight: '600',
+  },
+  categoriesListSection: {
+    marginTop: 8,
+  },
+  categoriesListTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
+    marginBottom: 12,
+  },
+  categoriesListLoading: {
+    paddingVertical: 20,
+    alignItems: 'center',
+  },
+  categoriesListEmpty: {
+    paddingVertical: 40,
+    alignItems: 'center',
+  },
+  categoriesListEmptyText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+  },
+  categoryListItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 8,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  categoryListItemName: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  categoryDeleteButton: {
+    padding: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
   },
 });
 

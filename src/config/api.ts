@@ -69,6 +69,9 @@ export const endpoints = {
   audio: `${BASE_URL}/api/audio`,
   audioUpload: `${BASE_URL}/api/audio/upload`,
   audioById: (id: string) => `${BASE_URL}/api/audio/${id}`,
+  // Music category endpoints
+  musicCategories: `${BASE_URL}/api/music-categories`,
+  musicCategoryById: (id: string) => `${BASE_URL}/api/music-categories/${id}`,
 };
 
 export const ENV = Config?.ENV || 'development';

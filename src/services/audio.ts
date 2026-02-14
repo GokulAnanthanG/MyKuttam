@@ -1,10 +1,21 @@
 import { endpoints } from '../config/api';
 
+export type MusicCategory = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type Audio = {
   id: string;
   title: string;
   description: string;
   audio_url: string;
+  category?: {
+    id: string;
+    name: string;
+  } | null;
   uploaded_date: string;
   createdAt: string;
   updatedAt: string;
@@ -36,6 +47,12 @@ export type AudioUpdateResponse = {
   data: Audio;
 };
 
+export type MusicCategoriesResponse = {
+  success: boolean;
+  message: string;
+  data: MusicCategory[];
+};
+
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const { getStoredToken } = await import('../storage/userRealm');
   const token = await getStoredToken();
@@ -46,10 +63,15 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
 };
 
 export const AudioService = {
-  getAudios: async (page: number = 1, limit: number = 10): Promise<AudioResponse> => {
+  getAudios: async (page: number = 1, limit: number = 10, categoryId?: string | null): Promise<AudioResponse> => {
     const queryParams = new URLSearchParams();
     queryParams.append('page', String(page));
     queryParams.append('limit', String(limit));
+
+    // Add category filter only if provided (not null/undefined)
+    if (categoryId) {
+      queryParams.append('category', categoryId);
+    }
 
     const response = await fetch(`${endpoints.audio}?${queryParams.toString()}`, {
       method: 'GET',
@@ -96,6 +118,7 @@ export const AudioService = {
     audioUri: string,
     title: string,
     description?: string,
+    categoryId?: string,
   ): Promise<AudioUploadResponse> => {
     const { getStoredToken } = await import('../storage/userRealm');
     const token = await getStoredToken();
@@ -114,6 +137,10 @@ export const AudioService = {
 
     if (description && description.trim()) {
       formData.append('description', description.trim());
+    }
+
+    if (categoryId) {
+      formData.append('category', categoryId);
     }
 
     const response = await fetch(endpoints.audioUpload, {
@@ -149,19 +176,23 @@ export const AudioService = {
     id: string,
     title?: string,
     description?: string,
+    categoryId?: string | null,
   ): Promise<AudioUpdateResponse> => {
     const headers = await getAuthHeaders();
 
-    const body: { title?: string; description?: string } = {};
+    const body: { title?: string; description?: string; category?: string | null } = {};
     if (title !== undefined) {
       body.title = title.trim();
     }
     if (description !== undefined) {
       body.description = description.trim();
     }
+    if (categoryId !== undefined) {
+      body.category = categoryId;
+    }
 
     if (Object.keys(body).length === 0) {
-      throw new Error('At least one field (title or description) must be provided');
+      throw new Error('At least one field (title, description, or category) must be provided');
     }
 
     const response = await fetch(endpoints.audioById(id), {
@@ -213,6 +244,94 @@ export const AudioService = {
 
     if (!response.ok) {
       throw new Error(data.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return data;
+  },
+
+  getMusicCategories: async (): Promise<MusicCategoriesResponse> => {
+    // Public endpoint, no auth required
+    const response = await fetch(endpoints.musicCategories, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    const text = await response.text();
+    let data: MusicCategoriesResponse;
+    
+    if (!text) {
+      data = {
+        success: false,
+        message: 'Empty response',
+        data: [],
+      };
+    } else {
+      data = JSON.parse(text) as MusicCategoriesResponse;
+    }
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to fetch music categories');
+    }
+
+    return data;
+  },
+
+  createMusicCategory: async (name: string): Promise<{ success: boolean; message: string; data?: MusicCategory }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.musicCategories, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name: name.trim() }),
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string; data?: MusicCategory })
+      : ({} as { success: boolean; message: string; data?: MusicCategory });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to create music category');
+    }
+
+    return data;
+  },
+
+  updateMusicCategory: async (id: string, name: string): Promise<{ success: boolean; message: string; data?: MusicCategory }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.musicCategoryById(id), {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ name: name.trim() }),
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string; data?: MusicCategory })
+      : ({} as { success: boolean; message: string; data?: MusicCategory });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update music category');
+    }
+
+    return data;
+  },
+
+  deleteMusicCategory: async (id: string): Promise<{ success: boolean; message: string }> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.musicCategoryById(id), {
+      method: 'DELETE',
+      headers,
+    });
+
+    const text = await response.text();
+    const data = text
+      ? (JSON.parse(text) as { success: boolean; message: string })
+      : ({} as { success: boolean; message: string });
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to delete music category');
     }
 
     return data;
