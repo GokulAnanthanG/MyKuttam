@@ -5,6 +5,7 @@ import { DonationNavigator } from './DonationNavigator';
 import { GalleryScreen } from '../screens/GalleryScreen';
 import { MusicScreen } from '../screens/MusicScreen';
 import { ProfileScreen } from '../screens/ProfileScreen';
+import { MoreNavigator } from './MoreNavigator';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { View, StyleSheet } from 'react-native';
@@ -15,6 +16,7 @@ export type BottomTabParamList = {
   Gallery: undefined;
   Music: undefined;
   Profile: undefined;
+  More: undefined;
 };
 
 const Tab = createBottomTabNavigator<BottomTabParamList>();
@@ -95,6 +97,15 @@ export const BottomTabNavigator = () => {
         options={{
           tabBarIcon: ({ focused }: { focused: boolean }) => (
             <TabIcon focused={focused} iconName="music" />
+          ),
+        }}
+      />
+      <Tab.Screen
+        name="More"
+        component={MoreNavigator}
+        options={{
+          tabBarIcon: ({ focused }: { focused: boolean }) => (
+            <TabIcon focused={focused} iconName="th-large" />
           ),
         }}
       />
