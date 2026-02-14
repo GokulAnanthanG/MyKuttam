@@ -1293,36 +1293,6 @@ export const GalleryScreen = () => {
                         color={colors.textMuted}
                       />
                     </Pressable>
-                    {showUploadCategoryDropdown && (
-                      <View style={styles.selectBoxDropdown}>
-                          <ScrollView
-                            style={styles.selectBoxDropdownScroll}
-                            nestedScrollEnabled={true}
-                            showsVerticalScrollIndicator={true}>
-                            {categories.map((category) => (
-                              <Pressable
-                                key={category.id}
-                                style={[
-                                  styles.selectBoxOption,
-                                  uploadCategoryId === category.id && styles.selectBoxOptionActive,
-                                ]}
-                                onPress={() => handleCategorySelection(category.id)}
-                                android_ripple={{ color: colors.primary + '20' }}>
-                                <Text
-                                  style={[
-                                    styles.selectBoxOptionText,
-                                    uploadCategoryId === category.id && styles.selectBoxOptionTextActive,
-                                  ]}>
-                                  {category.name}
-                                </Text>
-                                {uploadCategoryId === category.id && (
-                                  <Icon name="check" size={16} color={colors.primary} />
-                                )}
-                              </Pressable>
-                            ))}
-                          </ScrollView>
-                        </View>
-                    )}
                   </View>
                 )}
                 {!uploadCategoryId && selectedImageUri && (
@@ -1377,6 +1347,55 @@ export const GalleryScreen = () => {
             </View>
           </View>
         </View>
+      </Modal>
+
+      {/* Category Dropdown Modal - Separate modal to ensure all categories are visible */}
+      <Modal
+        visible={showUploadCategoryDropdown && showUploadModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowUploadCategoryDropdown(false)}>
+        <Pressable
+          style={styles.categoryDropdownModalOverlay}
+          onPress={() => setShowUploadCategoryDropdown(false)}>
+          <View style={styles.categoryDropdownModalContainer}>
+            <View style={styles.categoryDropdownHeader}>
+              <Text style={styles.categoryDropdownTitle}>Select Category</Text>
+              <TouchableOpacity
+                onPress={() => setShowUploadCategoryDropdown(false)}
+                style={styles.categoryDropdownCloseButton}>
+                <Icon name="times" size={20} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <ScrollView
+              style={styles.categoryDropdownScrollView}
+              contentContainerStyle={styles.categoryDropdownContent}
+              showsVerticalScrollIndicator={true}
+              nestedScrollEnabled={true}>
+              {categories.map((category) => (
+                <Pressable
+                  key={category.id}
+                  style={[
+                    styles.categoryDropdownOption,
+                    uploadCategoryId === category.id && styles.categoryDropdownOptionActive,
+                  ]}
+                  onPress={() => handleCategorySelection(category.id)}
+                  android_ripple={{ color: colors.primary + '20' }}>
+                  <Text
+                    style={[
+                      styles.categoryDropdownOptionText,
+                      uploadCategoryId === category.id && styles.categoryDropdownOptionTextActive,
+                    ]}>
+                    {category.name}
+                  </Text>
+                  {uploadCategoryId === category.id && (
+                    <Icon name="check" size={18} color={colors.primary} />
+                  )}
+                </Pressable>
+              ))}
+            </ScrollView>
+          </View>
+        </Pressable>
       </Modal>
 
       {/* Friends and Family Info Modal */}
@@ -2029,7 +2048,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     maxHeight: '90%',
-    flex: 1,
+    height: '90%',
     flexDirection: 'column',
   },
   uploadModalHeader: {
@@ -2047,6 +2066,7 @@ const styles = StyleSheet.create({
   },
   uploadModalContent: {
     flex: 1,
+    minHeight: 0,
   },
   uploadModalContentContainer: {
     padding: 20,
@@ -2205,6 +2225,7 @@ const styles = StyleSheet.create({
   selectBoxContainer: {
     position: 'relative',
     zIndex: 10,
+    marginBottom: 4,
   },
   selectBox: {
     flexDirection: 'row',
@@ -2236,17 +2257,22 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderWidth: 1,
     borderColor: colors.border,
-    maxHeight: 200,
+    maxHeight: 400,
     shadowColor: '#000',
     shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 10,
-    zIndex: 1000,
-    overflow: 'visible',
+    shadowOpacity: 0.25,
+    shadowRadius: 8,
+    elevation: 20,
+    zIndex: 9999,
+    overflow: 'hidden',
   },
   selectBoxDropdownScroll: {
-    maxHeight: 200,
+    maxHeight: 400,
+    minHeight: 0,
+  },
+  selectBoxDropdownContent: {
+    paddingBottom: 8,
+    minHeight: 0,
   },
   selectBoxOption: {
     flexDirection: 'row',
@@ -2267,6 +2293,69 @@ const styles = StyleSheet.create({
     color: colors.text,
   },
   selectBoxOptionTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  categoryDropdownModalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  categoryDropdownModalContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    width: '90%',
+    maxWidth: 400,
+    maxHeight: '80%',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 24,
+  },
+  categoryDropdownHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryDropdownTitle: {
+    fontFamily: fonts.heading,
+    fontSize: 18,
+    color: colors.text,
+    fontWeight: '600',
+  },
+  categoryDropdownCloseButton: {
+    padding: 4,
+  },
+  categoryDropdownScrollView: {
+    maxHeight: SCREEN_HEIGHT * 0.6,
+  },
+  categoryDropdownContent: {
+    paddingBottom: 16,
+  },
+  categoryDropdownOption: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 20,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  categoryDropdownOptionActive: {
+    backgroundColor: colors.cardMuted,
+  },
+  categoryDropdownOptionText: {
+    flex: 1,
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.text,
+  },
+  categoryDropdownOptionTextActive: {
     color: colors.primary,
     fontWeight: '600',
   },
