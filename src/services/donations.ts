@@ -208,6 +208,73 @@ export type UserDonationsOverallResponse = {
   } | null;
 };
 
+export type DonationSummaryDonor = {
+  id?: string;
+  name?: string;
+  phone?: string;
+  avatar?: string;
+  father_name?: string;
+  address?: string;
+};
+
+export type DonationSummaryRecord = {
+  id: string;
+  donor?: DonationSummaryDonor;
+  amount: number;
+  payment_status: 'pending' | 'success' | 'failed';
+  payment_method: 'online' | 'offline' | 'online offline';
+  transaction_id?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type ExpenseSummaryRecord = {
+  id: string;
+  title: string;
+  description?: string;
+  amount: number;
+  payment_method: 'cash' | 'online' | 'cheque';
+  status: 'approved' | 'pending' | 'rejected';
+  transaction_id?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type DonationSummaryData = {
+  subcategory_id: string;
+  subcategory_title: string;
+  subcategory_description?: string;
+  report_generated_date: string;
+  filters?: {
+    payment_status?: 'pending' | 'success' | 'failed';
+    startDate?: string;
+    endDate?: string;
+  };
+  donations: {
+    records: DonationSummaryRecord[];
+  };
+  expenses: {
+    records: ExpenseSummaryRecord[];
+  };
+  summary: {
+    netBalance: number;
+    totalCountInDateRange: number;
+    totalAmountInDateRange: number;
+    totalExpenseCountInDateRange: number;
+    totalExpenseAmountInDateRange: number;
+    overallTotalAmountReceived: number;
+    overallTotalExpensesAmount: number;
+    overallDonationCount: number;
+    overallExpenseCount: number;
+  };
+};
+
+export type DonationSummaryAPIResponse = {
+  success: boolean;
+  message: string;
+  data: DonationSummaryData | null;
+};
+
 const getAuthHeaders = async (): Promise<Record<string, string>> => {
   const { getStoredToken } = await import('../storage/userRealm');
   const token = await getStoredToken();
@@ -513,6 +580,31 @@ export const DonationService = {
 
     if (!response.ok) {
       throw new Error(data.message || 'Failed to fetch user donations overall');
+    }
+
+    return data;
+  },
+
+  getDonationSummary: async (params?: {
+    subcategory_id: string;
+    payment_status?: 'pending' | 'success' | 'failed';
+    startDate?: string;
+    endDate?: string;
+  }): Promise<DonationSummaryAPIResponse> => {
+    const headers = await getAuthHeaders();
+    const query = buildQueryString(params);
+    const response = await fetch(`${endpoints.donationSummary}${query}`, {
+      method: 'GET',
+      headers,
+    });
+
+    const text = await response.text();
+    const data: DonationSummaryAPIResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to fetch donation summary');
     }
 
     return data;

@@ -37,6 +37,7 @@ import {
   type DonationRecord,
   type UserDonationRecord,
   type UserDonationSummary,
+  type DonationSummaryAPIResponse,
 } from '../services/donations';
 import { ExpenseService, type ExpenseRecord } from '../services/expenses';
 import {
@@ -50,6 +51,37 @@ import { fonts } from '../theme/typography';
 import { useAuth } from '../context/AuthContext';
 import { PaymentService } from '../services/payment';
 import { BASE_URL } from '../config/api';
+// @ts-ignore - react-native-html-to-pdf doesn't have proper TypeScript definitions
+let RNHTMLtoPDF: any;
+let RNFS: any;
+try {
+  const pdfModule = require('react-native-html-to-pdf');
+  // The library exports generatePDF directly on the module
+  // Handle both default export and named export
+  RNHTMLtoPDF = pdfModule.default || pdfModule;
+  
+  // The library exports generatePDF, not convert - create alias
+  if (RNHTMLtoPDF && RNHTMLtoPDF.generatePDF && !RNHTMLtoPDF.convert) {
+    RNHTMLtoPDF.convert = RNHTMLtoPDF.generatePDF;
+  }
+  
+  // If still no convert, check if generatePDF is on the module itself
+  if (!RNHTMLtoPDF?.convert && pdfModule.generatePDF) {
+    RNHTMLtoPDF = pdfModule;
+    RNHTMLtoPDF.convert = pdfModule.generatePDF;
+  }
+  
+  RNFS = require('react-native-fs');
+  console.log('✅ PDF libraries loaded successfully');
+  console.log('✅ RNHTMLtoPDF:', RNHTMLtoPDF);
+  console.log('✅ RNHTMLtoPDF.convert:', typeof RNHTMLtoPDF?.convert);
+  console.log('✅ RNHTMLtoPDF.generatePDF:', typeof RNHTMLtoPDF?.generatePDF);
+  console.log('✅ pdfModule.generatePDF:', typeof pdfModule?.generatePDF);
+} catch (e) {
+  console.warn('⚠️ react-native-html-to-pdf or react-native-fs not available:', e);
+  RNHTMLtoPDF = null;
+  RNFS = null;
+}
 
 type Props = NativeStackScreenProps<DonationStackParamList, 'SubcategoryDetail'>;
 
@@ -280,6 +312,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const [paymentAmountModalVisible, setPaymentAmountModalVisible] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [pdfGenerating, setPdfGenerating] = useState(false);
 
   const canManageSubcategory = useMemo(() => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
@@ -1057,17 +1090,23 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
     setPaymentProcessing(true);
     try {
+      // Calculate amount with 1.95% fee
+      const amountWithFee = amount + (amount * 0.0195);
+      // Round to 2 decimal places
+      const finalAmount = Math.round(amountWithFee * 100) / 100;
+      
       // Generate deep link for callback after payment
       const deepLink = `mykuttam://subcategory/${categoryId}/${subcategoryId}`;
       const callbackUrl = encodeURIComponent(deepLink);
       
       console.log('Payment callback deep link:', deepLink);
+      console.log('Original amount:', amount, 'Amount with 1.95% fee:', finalAmount);
       
       // Call the initiate payment API
       // Note: The backend should accept callback_url as a parameter and redirect to it after payment
       const response = await PaymentService.initiatePayment({
         user_id: currentUser.id,
-        amount: amount,
+        amount: finalAmount, // Pass amount with 1.95% fee added
         subcategory_id: subcategoryId,
         callback_url: callbackUrl, // Deep link URL to redirect after payment completion
       });
@@ -1921,151 +1960,656 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   };
 
   const handleDownloadDonationsPDF = async () => {
-    if (sortedDonations.length === 0) {
-      Toast.show({
-        type: 'info',
-        text1: 'No donations',
-        text2: 'There are no donations to download.',
-      });
-      return;
-    }
-
+    console.log('📥 PDF Download started');
     try {
-      const totalAmount = sortedDonations.reduce((sum, item) => sum + item.amount, 0);
+      setPdfGenerating(true);
+      console.log('📥 Step 1: Building API parameters...');
       
-      // Generate HTML content for PDF
+      // Build query parameters for the summary API
+      const params: any = {
+        subcategory_id: subcategoryId,
+      };
+
+      // Add date filters if set
+      if (startDate) {
+        params.startDate = formatDateForAPI(startDate);
+      }
+      if (endDate) {
+        params.endDate = formatDateForAPI(endDate);
+      }
+
+      // Add payment status filter if set (only for management viewers)
+      if (isManagementViewer && sortedDonations.length > 0) {
+        // Check if all donations have the same status
+        const firstStatus = sortedDonations[0].payment_status;
+        const allSameStatus = sortedDonations.every(d => d.payment_status === firstStatus);
+        if (allSameStatus && firstStatus !== 'success') {
+          params.payment_status = firstStatus;
+        }
+      } else if (!isManagementViewer) {
+        // Normal users only see success
+        params.payment_status = 'success';
+      }
+
+      // Fetch summary from API
+      console.log('📥 Step 2: Fetching donation summary from API...', params);
+      const response = await DonationService.getDonationSummary(params);
+      console.log('📥 Step 2: API response received:', response.success);
+      
+      if (!response.success || !response.data) {
+        throw new Error(response.message || 'Failed to fetch donation summary');
+      }
+
+      const summaryData = response.data;
+      console.log('📥 Step 3: Summary data received, donations:', summaryData.donations.records.length, 'expenses:', summaryData.expenses.records.length);
+      
+      // Safely get subcategory title with fallback
+      const reportTitle = summaryData.subcategory_title || subcategoryTitle || 'Donation Report';
+      console.log('📥 Step 3.1: Report title:', reportTitle);
+      
+      // Sort donations by current sort settings (frontend sorting)
+      const sortedDonationRecords = [...summaryData.donations.records].sort((a, b) => {
+        let comparison = 0;
+        if (sortBy === 'amount') {
+          comparison = a.amount - b.amount;
+        } else {
+          // sortBy === 'date'
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          comparison = dateA - dateB;
+        }
+        return sortOrder === 'asc' ? comparison : -comparison;
+      });
+
+      // Sort expenses by current sort settings
+      const sortedExpenseRecords = [...summaryData.expenses.records].sort((a, b) => {
+        let comparison = 0;
+        if (sortBy === 'amount') {
+          comparison = a.amount - b.amount;
+        } else {
+          const dateA = new Date(a.created_at).getTime();
+          const dateB = new Date(b.created_at).getTime();
+          comparison = dateA - dateB;
+        }
+        return sortOrder === 'asc' ? comparison : -comparison;
+      });
+
+      // Format dates for display
+      const formatDateForReport = (dateString: string) => {
+        try {
+          const date = new Date(dateString);
+          return date.toLocaleDateString('en-IN', { 
+            year: 'numeric', 
+            month: 'short', 
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+          });
+        } catch {
+          return dateString;
+        }
+      };
+
+      // Generate beautiful HTML content for PDF
+      const escapeHtml = (text: string) => {
+        if (!text) return '';
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#039;');
+      };
+
+      const filterInfo = summaryData.filters 
+        ? `Filters: ${summaryData.filters.payment_status ? `Payment Status: ${summaryData.filters.payment_status.toUpperCase()}` : ''}${summaryData.filters.startDate ? ` | From: ${summaryData.filters.startDate}` : ''}${summaryData.filters.endDate ? ` To: ${summaryData.filters.endDate}` : ''}`
+        : '';
+
       const htmlContent = `
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Donations Report - ${subcategoryTitle}</title>
+  <title>Donation Report - ${escapeHtml(reportTitle)}</title>
   <style>
     @media print {
-      body { margin: 0; }
+      body { margin: 0; padding: 15px; }
       .no-print { display: none; }
+      .page-break { page-break-before: always; }
+    }
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
     }
     body {
-      font-family: Arial, sans-serif;
-      margin: 20px;
-      color: #333;
-      font-size: 12px;
-    }
-    h1 {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
       color: #2c3e50;
-      margin-bottom: 5px;
-      font-size: 18px;
+      line-height: 1.6;
+      background: #f8f9fa;
+      padding: 20px;
     }
-    h2 {
-      color: #34495e;
-      font-size: 12px;
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      background: white;
+      padding: 30px;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+    }
+    .header {
+      text-align: center;
+      border-bottom: 4px solid #8b6f47;
+      padding-bottom: 20px;
+      margin-bottom: 30px;
+    }
+    .header h1 {
+      color: #8b6f47;
+      font-size: 28px;
+      font-weight: 700;
       margin-bottom: 10px;
-      font-weight: normal;
+      letter-spacing: 1px;
+    }
+    .header-info {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      margin-top: 15px;
+      font-size: 13px;
+      color: #555;
+    }
+    .header-info-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 0;
+    }
+    .header-info-label {
+      font-weight: 600;
+      color: #666;
+      min-width: 120px;
+    }
+    .summary-section {
+      background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+      padding: 20px;
+      border-radius: 12px;
+      margin-bottom: 30px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .summary-title {
+      font-size: 20px;
+      font-weight: 700;
+      color: #2c3e50;
+      margin-bottom: 15px;
+      text-align: center;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 15px;
+    }
+    .summary-card {
+      background: white;
+      padding: 15px;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      text-align: center;
+    }
+    .summary-card-label {
+      font-size: 11px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+    .summary-card-value {
+      font-size: 20px;
+      font-weight: 700;
+      color: #2c3e50;
+    }
+    .summary-card-amount {
+      font-size: 24px;
+      font-weight: 700;
+      color: #8b6f47;
+      margin-top: 5px;
+    }
+    .net-balance {
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      color: white;
+      padding: 20px;
+      border-radius: 10px;
+      text-align: center;
+      margin-top: 15px;
+    }
+    .net-balance-label {
+      font-size: 14px;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+      opacity: 0.9;
+    }
+    .net-balance-value {
+      font-size: 36px;
+      font-weight: 700;
+    }
+    .section-title {
+      font-size: 18px;
+      font-weight: 700;
+      color: #2c3e50;
+      margin: 30px 0 15px 0;
+      padding-bottom: 10px;
+      border-bottom: 3px solid #8b6f47;
+      text-transform: uppercase;
+      letter-spacing: 1px;
     }
     table {
       width: 100%;
       border-collapse: collapse;
-      margin-top: 15px;
-      font-size: 11px;
+      margin-bottom: 30px;
+      background: white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    thead {
+      background: linear-gradient(135deg, #8b6f47 0%, #6b5435 100%);
+      color: white;
     }
     th {
-      background-color: #3498db;
-      color: white;
-      padding: 8px;
+      padding: 12px 10px;
       text-align: left;
-      font-weight: bold;
-      border: 1px solid #2980b9;
+      font-weight: 600;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
     }
-    td {
-      padding: 6px 8px;
-      border: 1px solid #ddd;
-    }
-    tr:nth-child(even) {
-      background-color: #f9f9f9;
-    }
-    .total-row {
-      background-color: #ecf0f1;
-      font-weight: bold;
-    }
-    .amount {
+    th.text-right {
       text-align: right;
     }
-    .date {
-      white-space: nowrap;
+    th.text-center {
+      text-align: center;
     }
-    .header-info {
-      margin-bottom: 15px;
-      padding-bottom: 10px;
-      border-bottom: 2px solid #3498db;
+    tbody tr {
+      border-bottom: 1px solid #e9ecef;
+      transition: background-color 0.2s;
+    }
+    tbody tr:hover {
+      background-color: #f8f9fa;
+    }
+    tbody tr:last-child {
+      border-bottom: none;
+    }
+    td {
+      padding: 10px;
+      font-size: 12px;
+      color: #495057;
+    }
+    td.text-right {
+      text-align: right;
+      font-weight: 600;
+      color: #2c3e50;
+    }
+    td.text-center {
+      text-align: center;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+    .status-success {
+      background: #d4edda;
+      color: #155724;
+    }
+    .status-pending {
+      background: #fff3cd;
+      color: #856404;
+    }
+    .status-failed {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    .status-approved {
+      background: #d4edda;
+      color: #155724;
+    }
+    .status-rejected {
+      background: #f8d7da;
+      color: #721c24;
+    }
+    .total-row {
+      background: linear-gradient(135deg, #e9ecef 0%, #dee2e6 100%);
+      font-weight: 700;
+    }
+    .total-row td {
+      font-size: 13px;
+      color: #2c3e50;
+      padding: 12px 10px;
+    }
+    .footer {
+      margin-top: 40px;
+      padding-top: 20px;
+      border-top: 2px solid #e9ecef;
+      text-align: center;
+      color: #6c757d;
+      font-size: 11px;
+    }
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #6c757d;
+      font-style: italic;
+    }
+    @media print {
+      body {
+        background: white;
+        padding: 0;
+      }
+      .container {
+        box-shadow: none;
+        padding: 20px;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="header-info">
-    <h1>Donations Report</h1>
-    <h2>Category: ${categoryName}</h2>
-    <h2>Subcategory: ${subcategoryTitle}</h2>
-    ${subcategoryDescription ? `<h2>Description: ${subcategoryDescription}</h2>` : ''}
-    <h2>Generated: ${new Date().toLocaleString()}</h2>
-  </div>
-  
-  <table>
-    <thead>
-      <tr>
-        <th>Donor Name</th>
-        <th>Father Name</th>
-        <th>Date</th>
-        <th class="amount">Amount (₹)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${sortedDonations
-        .map((item) => {
-          const anyItem: any = item;
-          const donorName =
-            item.donor?.name ||
-            anyItem.Donor_name ||
-            anyItem.donor_id?.name ||
-            'Anonymous donor';
-          const fatherName = anyItem.donor_father_name || '-';
-          const date = formatDate(item.createdAt);
-          const amount = formatCurrency(item.amount);
+  <div class="container">
+    <div class="header">
+      <h1>📊 Donation & Expense Report</h1>
+      <div class="header-info">
+        <div class="header-info-row">
+          <span class="header-info-label">Category:</span>
+          <span>${escapeHtml(categoryName)}</span>
+        </div>
+        <div class="header-info-row">
+          <span class="header-info-label">Subcategory:</span>
+          <span>${escapeHtml(reportTitle)}</span>
+        </div>
+        ${summaryData.subcategory_description ? `
+        <div class="header-info-row">
+          <span class="header-info-label">Description:</span>
+          <span>${escapeHtml(summaryData.subcategory_description)}</span>
+        </div>
+        ` : ''}
+        <div class="header-info-row">
+          <span class="header-info-label">Report Generated:</span>
+          <span>${formatDateForReport(summaryData.report_generated_date)}</span>
+        </div>
+        ${filterInfo ? `
+        <div class="header-info-row">
+          <span class="header-info-label">Applied Filters:</span>
+          <span>${escapeHtml(filterInfo)}</span>
+        </div>
+        ` : ''}
+      </div>
+    </div>
 
-          return `
+    <div class="summary-section">
+      <div class="summary-title">📈 Financial Summary</div>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <div class="summary-card-label">Total Donations</div>
+          <div class="summary-card-value">${summaryData.summary.totalCountInDateRange}</div>
+          <div class="summary-card-amount">${formatCurrency(summaryData.summary.totalAmountInDateRange)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-label">Total Expenses</div>
+          <div class="summary-card-value">${summaryData.summary.totalExpenseCountInDateRange}</div>
+          <div class="summary-card-amount" style="color: #f04438;">${formatCurrency(summaryData.summary.totalExpenseAmountInDateRange)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-label">Overall Donations</div>
+          <div class="summary-card-value">${summaryData.summary.overallDonationCount}</div>
+          <div class="summary-card-amount">${formatCurrency(summaryData.summary.overallTotalAmountReceived)}</div>
+        </div>
+        <div class="summary-card">
+          <div class="summary-card-label">Overall Expenses</div>
+          <div class="summary-card-value">${summaryData.summary.overallExpenseCount}</div>
+          <div class="summary-card-amount" style="color: #f04438;">${formatCurrency(summaryData.summary.overallTotalExpensesAmount)}</div>
+        </div>
+      </div>
+      <div class="net-balance">
+        <div class="net-balance-label">Net Balance</div>
+        <div class="net-balance-value">${formatCurrency(summaryData.summary.netBalance)}</div>
+      </div>
+    </div>
+
+    <div class="section-title">💰 Donations (${sortedDonationRecords.length})</div>
+    ${sortedDonationRecords.length > 0 ? `
+    <table>
+      <thead>
         <tr>
-          <td>${donorName}</td>
-          <td>${fatherName}</td>
-          <td class="date">${date}</td>
-          <td class="amount">${amount}</td>
+          <th style="width: 5%;">#</th>
+          <th style="width: 20%;">Donor Name</th>
+          <th style="width: 15%;">Father Name</th>
+          <th style="width: 12%;">Phone</th>
+          <th style="width: 15%;">Date & Time</th>
+          <th style="width: 10%;" class="text-center">Method</th>
+          <th style="width: 8%;" class="text-center">Status</th>
+          <th style="width: 15%;" class="text-right">Amount (₹)</th>
         </tr>
-      `;
-        })
-        .join('')}
-      <tr class="total-row">
-        <td colspan="3"><strong>Total (${sortedDonations.length} donations)</strong></td>
-        <td class="amount"><strong>${formatCurrency(totalAmount)}</strong></td>
-      </tr>
-    </tbody>
-  </table>
+      </thead>
+      <tbody>
+        ${sortedDonationRecords.map((item, index) => {
+          const donorName = item.donor?.name || 'Anonymous';
+          const fatherName = item.donor?.father_name || '-';
+          const phone = item.donor?.phone || '-';
+          const date = formatDateForReport(item.created_at);
+          const amount = formatCurrency(item.amount);
+          const method = item.payment_method.toUpperCase();
+          const status = item.payment_status;
+          const statusClass = status === 'success' ? 'status-success' : status === 'pending' ? 'status-pending' : 'status-failed';
+          
+          return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(donorName)}</td>
+            <td>${escapeHtml(fatherName)}</td>
+            <td>${escapeHtml(phone)}</td>
+            <td>${date}</td>
+            <td class="text-center">${method}</td>
+            <td class="text-center"><span class="status-badge ${statusClass}">${status.toUpperCase()}</span></td>
+            <td class="text-right">${amount}</td>
+          </tr>
+          `;
+        }).join('')}
+        <tr class="total-row">
+          <td colspan="7" style="text-align: right; padding-right: 15px;"><strong>Total Donations:</strong></td>
+          <td class="text-right"><strong>${formatCurrency(summaryData.summary.totalAmountInDateRange)}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    ` : `
+    <div class="empty-state">
+      <p>No donations found in the selected date range.</p>
+    </div>
+    `}
+
+    <div class="section-title">💸 Expenses (${sortedExpenseRecords.length})</div>
+    ${sortedExpenseRecords.length > 0 ? `
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 5%;">#</th>
+          <th style="width: 25%;">Title</th>
+          <th style="width: 30%;">Description</th>
+          <th style="width: 15%;">Date & Time</th>
+          <th style="width: 10%;" class="text-center">Method</th>
+          <th style="width: 8%;" class="text-center">Status</th>
+          <th style="width: 7%;" class="text-right">Amount (₹)</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sortedExpenseRecords.map((item, index) => {
+          const date = formatDateForReport(item.created_at);
+          const amount = formatCurrency(item.amount);
+          const method = item.payment_method.toUpperCase();
+          const status = item.status;
+          const statusClass = status === 'approved' ? 'status-approved' : status === 'pending' ? 'status-pending' : 'status-rejected';
+          
+          return `
+          <tr>
+            <td>${index + 1}</td>
+            <td>${escapeHtml(item.title)}</td>
+            <td>${escapeHtml(item.description || '-')}</td>
+            <td>${date}</td>
+            <td class="text-center">${method}</td>
+            <td class="text-center"><span class="status-badge ${statusClass}">${status.toUpperCase()}</span></td>
+            <td class="text-right">${amount}</td>
+          </tr>
+          `;
+        }).join('')}
+        <tr class="total-row">
+          <td colspan="6" style="text-align: right; padding-right: 15px;"><strong>Total Expenses:</strong></td>
+          <td class="text-right"><strong>${formatCurrency(summaryData.summary.totalExpenseAmountInDateRange)}</strong></td>
+        </tr>
+      </tbody>
+    </table>
+    ` : `
+    <div class="empty-state">
+      <p>No expenses found in the selected date range.</p>
+    </div>
+    `}
+
+    <div class="footer">
+      <p>Generated by MyKuttam App | ${new Date().toLocaleString('en-IN')}</p>
+      <p>This is an automated report. For any discrepancies, please contact the administrator.</p>
+    </div>
+  </div>
 </body>
 </html>
       `;
 
-      // Encode HTML as data URI
-      const dataUri = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`;
+      console.log('📥 Step 4: HTML content generated, length:', htmlContent.length);
+      console.log('📥 Step 5: Checking PDF library availability...');
+      console.log('📥 RNHTMLtoPDF available:', !!RNHTMLtoPDF);
+      console.log('📥 RNHTMLtoPDF.convert available:', !!(RNHTMLtoPDF && RNHTMLtoPDF.convert));
+      console.log('📥 RNHTMLtoPDF.generatePDF available:', !!(RNHTMLtoPDF && RNHTMLtoPDF.generatePDF));
       
-      // Try to open in browser for printing/saving as PDF
-      const canOpen = await Linking.canOpenURL(dataUri);
-      if (canOpen) {
-        await Linking.openURL(dataUri);
-        Toast.show({
-          type: 'success',
-          text1: 'Report opened',
-          text2: 'Use browser print option to save as PDF.',
+      // Try to generate PDF file first (if library is available)
+      // The library exports generatePDF, not convert
+      const pdfConvertMethod = RNHTMLtoPDF?.convert || RNHTMLtoPDF?.generatePDF;
+      if (RNHTMLtoPDF && pdfConvertMethod) {
+        console.log('📥 Step 6: PDF library is available, generating PDF...');
+        // Use the safe report title for filename
+        const safeTitle = reportTitle.replace(/[^a-zA-Z0-9]/g, '_');
+        const fileName = `Donation_Report_${safeTitle}_${Date.now()}.pdf`;
+        console.log('📥 Step 6.1: File name generated:', fileName);
+        
+        const options = {
+          html: htmlContent,
+          fileName: fileName,
+          directory: Platform.OS === 'android' ? 'Downloads' : 'Documents',
+          base64: false,
+          width: 595, // A4 width in points
+          height: 842, // A4 height in points
+          paddingLeft: 20,
+          paddingRight: 20,
+          paddingTop: 20,
+          paddingBottom: 20,
+        };
+
+        console.log('📥 Step 7: Calling PDF convert method with options:', {
+          fileName,
+          directory: options.directory,
+          htmlLength: htmlContent.length,
+          method: RNHTMLtoPDF.convert ? 'convert' : 'generatePDF',
         });
+
+        try {
+          const file = await pdfConvertMethod(options);
+          console.log('📥 Step 8: PDF convert returned:', file);
+          
+          if (file && file.filePath) {
+            console.log('PDF generated successfully at:', file.filePath);
+            
+            // Verify file exists (especially on Android)
+            if (RNFS && Platform.OS === 'android') {
+              try {
+                const fileExists = await RNFS.exists(file.filePath);
+                if (!fileExists) {
+                  throw new Error('PDF file was not created');
+                }
+                console.log('PDF file verified at:', file.filePath);
+              } catch (verifyError) {
+                console.error('File verification error:', verifyError);
+                throw new Error('PDF file verification failed');
+              }
+            }
+            
+            // On Android, file is already saved to Downloads, just show success
+            // On iOS, we need to use share sheet to save to Files app
+            if (Platform.OS === 'android') {
+              Toast.show({
+                type: 'success',
+                text1: 'PDF Downloaded',
+                text2: `Report saved to Downloads as ${fileName}`,
+                visibilityTime: 3000,
+              });
+            } else {
+              // iOS: Use share sheet to save to Files app
+              const shareOptions = {
+                url: `file://${file.filePath}`,
+                type: 'application/pdf',
+                title: `Donation Report - ${reportTitle}`,
+                subject: `Donation Report - ${reportTitle}`,
+              };
+
+              await Share.share(shareOptions);
+              
+              Toast.show({
+                type: 'success',
+                text1: 'PDF Generated',
+                text2: `Report saved as ${fileName}`,
+                visibilityTime: 3000,
+              });
+            }
+            return; // Exit early on success
+          } else {
+            throw new Error('PDF file path not generated');
+          }
+        } catch (pdfError) {
+          console.error('❌ PDF generation error:', pdfError);
+          console.error('❌ PDF error details:', {
+            message: pdfError instanceof Error ? pdfError.message : String(pdfError),
+            stack: pdfError instanceof Error ? pdfError.stack : undefined,
+          });
+          // Continue to fallback
+        }
       } else {
-        // Fallback: Share as formatted text
+        console.log('⚠️ Step 6: PDF library not available, skipping PDF generation');
+        console.log('⚠️ RNHTMLtoPDF:', RNHTMLtoPDF);
+        console.log('⚠️ RNHTMLtoPDF.convert:', RNHTMLtoPDF?.convert);
+        console.log('⚠️ RNHTMLtoPDF.generatePDF:', RNHTMLtoPDF?.generatePDF);
+      }
+      
+      console.log('📥 Step 9: Falling back to browser...');
+      // Fallback: Try to open in browser
+      try {
+        const dataUri = `data:text/html;charset=utf-8,${encodeURIComponent(htmlContent)}`;
+        const canOpen = await Linking.canOpenURL(dataUri);
+        if (canOpen) {
+          await Linking.openURL(dataUri);
+          Toast.show({
+            type: 'info',
+            text1: 'Report opened in browser',
+            text2: 'Use browser print option to save as PDF.',
+            visibilityTime: 3000,
+          });
+          return;
+        }
+      } catch (browserError) {
+        console.error('❌ Browser fallback error:', browserError);
+      }
+      
+      console.log('📥 Step 10: Falling back to text sharing...');
+      // Final fallback: Share as formatted text
         let reportText = `DONATIONS REPORT\n`;
         reportText += `================\n\n`;
         reportText += `Category: ${categoryName}\n`;
@@ -2073,31 +2617,48 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         if (subcategoryDescription) {
           reportText += `Description: ${subcategoryDescription}\n`;
         }
-        reportText += `Generated: ${new Date().toLocaleString()}\n\n`;
-        reportText += `Total Donations: ${sortedDonations.length}\n`;
-        reportText += `Total Amount: ${formatCurrency(totalAmount)}\n\n`;
-        reportText += `DONATIONS LIST\n`;
-        reportText += `${'='.repeat(80)}\n\n`;
+        reportText += `Generated: ${formatDateForReport(summaryData.report_generated_date)}\n`;
+        if (filterInfo) {
+          reportText += `${filterInfo}\n`;
+        }
+        reportText += `\n📈 FINANCIAL SUMMARY\n`;
+        reportText += `${'-'.repeat(80)}\n`;
+        reportText += `Total Donations (Date Range): ${summaryData.summary.totalCountInDateRange} - ${formatCurrency(summaryData.summary.totalAmountInDateRange)}\n`;
+        reportText += `Total Expenses (Date Range): ${summaryData.summary.totalExpenseCountInDateRange} - ${formatCurrency(summaryData.summary.totalExpenseAmountInDateRange)}\n`;
+        reportText += `Overall Donations: ${summaryData.summary.overallDonationCount} - ${formatCurrency(summaryData.summary.overallTotalAmountReceived)}\n`;
+        reportText += `Overall Expenses: ${summaryData.summary.overallExpenseCount} - ${formatCurrency(summaryData.summary.overallTotalExpensesAmount)}\n`;
+        reportText += `Net Balance: ${formatCurrency(summaryData.summary.netBalance)}\n\n`;
         
-        reportText += `${'Donor Name'.padEnd(25)} ${'Father Name'.padEnd(25)} ${'Date'.padEnd(20)} ${'Amount'.padStart(15)}\n`;
-        reportText += `${'-'.repeat(85)}\n`;
+        reportText += `💰 DONATIONS (${sortedDonationRecords.length})\n`;
+        reportText += `${'='.repeat(80)}\n`;
+        reportText += `${'#'.padEnd(4)} ${'Donor Name'.padEnd(20)} ${'Phone'.padEnd(12)} ${'Date'.padEnd(18)} ${'Amount'.padStart(15)}\n`;
+        reportText += `${'-'.repeat(80)}\n`;
         
-        sortedDonations.forEach((item) => {
-          const anyItem: any = item;
-          const donorName =
-            (item.donor?.name ||
-              anyItem.Donor_name ||
-              anyItem.donor_id?.name ||
-              'Anonymous donor').substring(0, 24);
-          const fatherName = (anyItem.donor_father_name || '-').substring(0, 24);
-          const date = formatDate(item.createdAt).substring(0, 19);
+        sortedDonationRecords.forEach((item, index) => {
+          const donorName = (item.donor?.name || 'Anonymous').substring(0, 19);
+          const phone = (item.donor?.phone || '-').substring(0, 11);
+          const date = formatDateForReport(item.created_at).substring(0, 17);
           const amount = formatCurrency(item.amount);
-
-          reportText += `${donorName.padEnd(25)} ${fatherName.padEnd(25)} ${date.padEnd(20)} ${amount.padStart(15)}\n`;
+          reportText += `${String(index + 1).padEnd(4)} ${donorName.padEnd(20)} ${phone.padEnd(12)} ${date.padEnd(18)} ${amount.padStart(15)}\n`;
         });
         
-        reportText += `${'-'.repeat(85)}\n`;
-        reportText += `${'TOTAL'.padEnd(70)} ${formatCurrency(totalAmount).padStart(15)}\n`;
+        reportText += `${'-'.repeat(80)}\n`;
+        reportText += `${'TOTAL'.padEnd(54)} ${formatCurrency(summaryData.summary.totalAmountInDateRange).padStart(15)}\n\n`;
+        
+        reportText += `💸 EXPENSES (${sortedExpenseRecords.length})\n`;
+        reportText += `${'='.repeat(80)}\n`;
+        reportText += `${'#'.padEnd(4)} ${'Title'.padEnd(25)} ${'Date'.padEnd(18)} ${'Amount'.padStart(15)}\n`;
+        reportText += `${'-'.repeat(80)}\n`;
+        
+        sortedExpenseRecords.forEach((item, index) => {
+          const title = item.title.substring(0, 24);
+          const date = formatDateForReport(item.created_at).substring(0, 17);
+          const amount = formatCurrency(item.amount);
+          reportText += `${String(index + 1).padEnd(4)} ${title.padEnd(25)} ${date.padEnd(18)} ${amount.padStart(15)}\n`;
+        });
+        
+        reportText += `${'-'.repeat(80)}\n`;
+        reportText += `${'TOTAL'.padEnd(47)} ${formatCurrency(summaryData.summary.totalExpenseAmountInDateRange).padStart(15)}\n`;
 
         const shareOptions = {
           message: reportText,
@@ -2108,13 +2669,21 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         };
 
         await Share.share(shareOptions);
-      }
+        console.log('📥 Step 11: Text sharing completed');
     } catch (error) {
+      console.error('❌ PDF download error:', error);
+      console.error('❌ Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       Toast.show({
         type: 'error',
         text1: 'Download failed',
         text2: error instanceof Error ? error.message : 'Unable to generate PDF report.',
+        visibilityTime: 4000,
       });
+    } finally {
+      setPdfGenerating(false);
     }
   };
 
@@ -4461,6 +5030,28 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           </View>
         </View>
       </Modal>
+
+      {/* PDF Download Loading Modal */}
+      <Modal visible={pdfGenerating} transparent animationType="fade">
+        <View style={styles.pdfLoadingOverlay}>
+          <View style={styles.pdfLoadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.pdfLoadingText}>Generating PDF...</Text>
+            <Text style={styles.pdfLoadingSubtext}>Please wait</Text>
+          </View>
+        </View>
+      </Modal>
+
+      {/* Payment Processing Loading Modal */}
+      <Modal visible={paymentProcessing} transparent animationType="fade">
+        <View style={styles.pdfLoadingOverlay}>
+          <View style={styles.pdfLoadingContainer}>
+            <ActivityIndicator size="large" color={colors.primary} />
+            <Text style={styles.pdfLoadingText}>Processing Payment...</Text>
+            <Text style={styles.pdfLoadingSubtext}>Please wait</Text>
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -5661,6 +6252,39 @@ const styles = StyleSheet.create({
     fontFamily: fonts.heading,
     fontSize: 14,
     color: '#fff',
+  },
+  pdfLoadingOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pdfLoadingContainer: {
+    backgroundColor: colors.card,
+    borderRadius: 16,
+    padding: 32,
+    alignItems: 'center',
+    justifyContent: 'center',
+    minWidth: 200,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 8,
+    elevation: 8,
+  },
+  pdfLoadingText: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    marginTop: 16,
+    textAlign: 'center',
+  },
+  pdfLoadingSubtext: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
+    marginTop: 8,
+    textAlign: 'center',
   },
 });
 

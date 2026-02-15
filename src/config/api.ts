@@ -42,6 +42,7 @@ export const endpoints = {
   donations: `${BASE_URL}/api/donations`,
   donationById: (id: string) => `${BASE_URL}/api/donations/${id}`,
   donationCategoriesSummary: `${BASE_URL}/api/donations/categories-summary`,
+  donationSummary: `${BASE_URL}/api/donations/summary`,
   categories: `${BASE_URL}/api/categories`,
   categoryById: (id: string) => `${BASE_URL}/api/categories/${id}`,
   categoryStatus: (id: string) => `${BASE_URL}/api/categories/${id}/status`,
