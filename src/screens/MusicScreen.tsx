@@ -16,6 +16,7 @@ import {
   TouchableOpacity,
   View,
   Dimensions,
+  Linking,
 } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -557,6 +558,88 @@ export const MusicScreen = () => {
       setAudioLoading(false);
     }
   };
+
+  const fetchAudioById = async (audioId: string) => {
+    try {
+      const response = await AudioService.getAudioById(audioId);
+      if (response.success && response.data) {
+        // Add to list if not already there
+        setAudios((prev) => {
+          if (prev.find((a) => a.id === audioId)) {
+            return prev;
+          }
+          return [response.data!, ...prev];
+        });
+        // Play the audio
+        handleAudioToggle(response.data);
+      } else {
+        Toast.show({
+          type: 'error',
+          text1: 'Audio not found',
+          text2: 'The audio you are trying to play does not exist.',
+        });
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: 'Failed to load audio.',
+      });
+    }
+  };
+
+  // Deep link handling - open audio when deep link is clicked
+  useEffect(() => {
+    const handleDeepLink = (event: { url: string }) => {
+      const url = event.url;
+      console.log('Deep link received in MusicScreen:', url);
+      
+      // Parse deep link: mykuttam://audio/:id
+      const deepLinkMatch = url.match(/mykuttam:\/\/audio\/(.+)/);
+      if (deepLinkMatch && deepLinkMatch[1]) {
+        const audioId = deepLinkMatch[1];
+        // Find the audio in current list
+        const audio = audios.find((a) => a.id === audioId);
+        if (audio) {
+          // Play the audio
+          handleAudioToggle(audio);
+        } else {
+          // If audio not loaded yet, fetch it
+          fetchAudioById(audioId);
+        }
+        return;
+      }
+
+      // Parse web URL: https://domain.com/audio/:id
+      const webUrlMatch = url.match(/https?:\/\/[^\/]+\/audio\/(.+)/);
+      if (webUrlMatch && webUrlMatch[1]) {
+        const audioId = webUrlMatch[1];
+        // Find the audio in current list
+        const audio = audios.find((a) => a.id === audioId);
+        if (audio) {
+          // Play the audio
+          handleAudioToggle(audio);
+        } else {
+          // If audio not loaded yet, fetch it
+          fetchAudioById(audioId);
+        }
+      }
+    };
+
+    // Handle deep link when app opens from closed state
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
+
+    // Listen for deep links when app is open
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [audios, handleAudioToggle]);
 
   const handleSelectAudio = async () => {
     try {

@@ -53,6 +53,20 @@
             <category android:name="android.intent.category.BROWSABLE" />
             <data android:scheme="https" android:host="95b4c77b93f1.ngrok-free.app" android:pathPrefix="/gallery" />
         </intent-filter>
+        <!-- Deep link intent filter for mykuttam://subcategory/:categoryId/:subcategoryId -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="mykuttam" android:host="subcategory" />
+        </intent-filter>
+        <!-- Deep link intent filter for mykuttam://audio/:id -->
+        <intent-filter>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.DEFAULT" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="mykuttam" android:host="audio" />
+        </intent-filter>
       </activity>
     </application>
 </manifest>

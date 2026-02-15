@@ -48,7 +48,8 @@ import {
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { useAuth } from '../context/AuthContext';
-import { RazorpayService, createRazorpayOptions } from '../services/razorpay';
+import { PaymentService } from '../services/payment';
+import { BASE_URL } from '../config/api';
 
 type Props = NativeStackScreenProps<DonationStackParamList, 'SubcategoryDetail'>;
 
@@ -82,6 +83,32 @@ const formatDateForDisplay = (date: Date | null): string => {
 const generateOfflineTxnId = () => {
   const random = Math.floor(1000 + Math.random() * 9000);
   return `OFFLINE-TXN-${Date.now()}-${random}`;
+};
+
+const generateSubcategoryDeepLink = (categoryId: string, subcategoryId: string): string => {
+  // Generate deep link for subcategory
+  // Format: mykuttam://subcategory/:categoryId/:subcategoryId
+  return `mykuttam://subcategory/${categoryId}/${subcategoryId}`;
+};
+
+const generateSubcategoryWebUrl = (categoryId: string, subcategoryId: string): string => {
+  // Generate web URL for sharing (more compatible with messaging apps)
+  // Backend serves HTML pages at GET /donate-here/:categoryId/:subcategoryId
+  // This endpoint includes Open Graph tags for rich link previews
+  // Always use BASE_URL from environment variable
+  if (!BASE_URL) {
+    return '';
+  }
+  
+  // Remove /api from BASE_URL if present (web endpoint is at root level)
+  let baseUrl = BASE_URL;
+  if (baseUrl.endsWith('/api')) {
+    baseUrl = baseUrl.slice(0, -4);
+  }
+  // Ensure no trailing slash
+  baseUrl = baseUrl.replace(/\/$/, '');
+  
+  return `${baseUrl}/donate-here/${categoryId}/${subcategoryId}`;
 };
 
 const getInitials = (name: string): string => {
@@ -445,6 +472,56 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       setSubcategoryManagers([]);
     }
   }, [subcategoryId]);
+
+  // Deep link handling - handle return from payment
+  useEffect(() => {
+    // Handle deep link when app is already open
+    const handleDeepLink = (event: { url: string }) => {
+      const url = event.url;
+      console.log('Deep link received in SubcategoryDetailScreen:', url);
+      
+      // Parse deep link: mykuttam://subcategory/:categoryId/:subcategoryId
+      const deepLinkMatch = url.match(/mykuttam:\/\/subcategory\/([^\/]+)\/([^\/]+)/);
+      if (deepLinkMatch && deepLinkMatch[1] && deepLinkMatch[2]) {
+        const linkCategoryId = deepLinkMatch[1];
+        const linkSubcategoryId = deepLinkMatch[2];
+        
+        // Only handle if it matches current subcategory
+        if (linkCategoryId === categoryId && linkSubcategoryId === subcategoryId) {
+          // Refresh donations list to show new payment
+          fetchDonations(1);
+        }
+        return;
+      }
+
+      // Parse web URL: https://domain.com/donate-here/:categoryId/:subcategoryId
+      const webUrlMatch = url.match(/https?:\/\/[^\/]+\/donate-here\/([^\/]+)\/([^\/]+)/);
+      if (webUrlMatch && webUrlMatch[1] && webUrlMatch[2]) {
+        const linkCategoryId = webUrlMatch[1];
+        const linkSubcategoryId = webUrlMatch[2];
+        
+        // Only handle if it matches current subcategory
+        if (linkCategoryId === categoryId && linkSubcategoryId === subcategoryId) {
+          // Refresh donations list to show new payment
+          fetchDonations(1);
+        }
+      }
+    };
+
+    // Handle deep link when app opens from closed state
+    Linking.getInitialURL().then((url) => {
+      if (url) {
+        handleDeepLink({ url });
+      }
+    });
+
+    // Listen for deep links when app is open
+    const subscription = Linking.addEventListener('url', handleDeepLink);
+
+    return () => {
+      subscription.remove();
+    };
+  }, [categoryId, subcategoryId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -850,6 +927,52 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     setDonationModeModalVisible(true);
   };
 
+  const handleShareSubcategory = async () => {
+    try {
+      const deepLink = generateSubcategoryDeepLink(categoryId, subcategoryId);
+      const webUrl = generateSubcategoryWebUrl(categoryId, subcategoryId);
+      
+      // Format share message: Check out title, description, and call to action
+      let shareText = `Check out "${subcategoryTitle}"`;
+      
+      if (subcategoryDescription) {
+        shareText += `\n\n${subcategoryDescription}`;
+      }
+      
+      shareText += `\n\nSupport this cause in MyKuttam app`;
+      
+      // Format like Instagram - URL first, then description
+      // This helps messaging apps recognize it as a link and show preview
+      const message = `${webUrl}\n\n${shareText}`;
+      
+      // For iOS, use url property for better link preview support
+      // For Android, put URL at the start of message for better recognition
+      const shareContent = Platform.OS === 'ios' 
+        ? {
+            url: webUrl, // iOS: URL property helps with link preview
+            message: shareText,
+            title: subcategoryTitle,
+          }
+        : {
+            message: message, // Android: URL in message for better recognition
+            title: subcategoryTitle,
+          };
+
+      const result = await Share.share(shareContent);
+      if (result.action === Share.sharedAction) {
+        // Share was successful
+      } else if (result.action === Share.dismissedAction) {
+        // Share was dismissed
+      }
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Share failed',
+        text2: error instanceof Error ? error.message : 'Unable to share subcategory',
+      });
+    }
+  };
+
   const startOnlineDonationFlow = () => {
     if (subcategoryType === 'specific_amount') {
       // Direct payment for specific amount
@@ -923,72 +1046,93 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       return;
     }
 
-    setPaymentProcessing(true);
-    try {
-      const description = `Donation for ${subcategoryTitle}${
-        subcategoryDescription ? ` - ${subcategoryDescription}` : ''
-      }`;
-
-      // Add 2% extra only for the Razorpay charge, keep original amount for donation record
-      const amountWithFee = amount * 1.02;
-
-      const options = createRazorpayOptions(
-        amountWithFee,
-        description,
-        currentUser.name,
-        currentUser.phone,
-      );
-
-      const paymentResponse = await RazorpayService.openCheckout(options);
-
-      // Payment successful, create donation record
-      await handlePaymentSuccess(paymentResponse, amount);
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Payment failed';
-      if (errorMessage !== 'Payment cancelled by user') {
-        Toast.show({
-          type: 'error',
-          text1: 'Payment failed',
-          text2: errorMessage,
-        });
-      }
-    } finally {
-      setPaymentProcessing(false);
-    }
-  };
-
-  const handlePaymentSuccess = async (paymentResponse: { razorpay_payment_id: string }, amount: number) => {
-    try {
-      const payload = {
-        subcategory_id: subcategoryId,
-        amount: amount,
-        payment_method: 'online' as const,
-        transaction_id: paymentResponse.razorpay_payment_id,
-        payment_status: 'success' as const,
-        donor_id: currentUser?.id,
-        Donor_name: currentUser?.name,
-        donor_phone: currentUser?.phone,
-        donor_address: currentUser?.address,
-      };
-
-      const response = await DonationService.createDonation(payload);
-      if (response.success) {
-        Toast.show({
-          type: 'success',
-          text1: 'Donation successful',
-          text2: `Thank you for your donation of ${formatCurrency(amount)}!`,
-        });
-        // Refresh donations list
-        await fetchDonations(1);
-      } else {
-        throw new Error(response.message || 'Failed to record donation');
-      }
-    } catch (error) {
+    if (!currentUser.id) {
       Toast.show({
         type: 'error',
-        text1: 'Payment recorded but donation failed',
-        text2: error instanceof Error ? error.message : 'Please contact support.',
+        text1: 'User ID missing',
+        text2: 'Please login again to continue.',
       });
+      return;
+    }
+
+    setPaymentProcessing(true);
+    try {
+      // Generate deep link for callback after payment
+      const deepLink = `mykuttam://subcategory/${categoryId}/${subcategoryId}`;
+      const callbackUrl = encodeURIComponent(deepLink);
+      
+      console.log('Payment callback deep link:', deepLink);
+      
+      // Call the initiate payment API
+      // Note: The backend should accept callback_url as a parameter and redirect to it after payment
+      const response = await PaymentService.initiatePayment({
+        user_id: currentUser.id,
+        amount: amount,
+        subcategory_id: subcategoryId,
+        callback_url: callbackUrl, // Deep link URL to redirect after payment completion
+      });
+
+      if (response.success && response.data?.paymentUrl) {
+        // Close the donation mode modal
+        setDonationModeModalVisible(false);
+        
+        // Normalize and validate the payment URL
+        let paymentUrl = response.data.paymentUrl.trim();
+        
+        // Ensure URL has proper protocol
+        if (!paymentUrl.match(/^https?:\/\//i)) {
+          paymentUrl = `https://${paymentUrl}`;
+        }
+        
+        // Validate URL format
+        try {
+          new URL(paymentUrl);
+        } catch (urlError) {
+          throw new Error('Invalid payment URL format');
+        }
+        
+        console.log('Opening payment URL:', paymentUrl);
+        
+        // Try to open the URL directly
+        // canOpenURL can be unreliable, so we try opening directly
+        try {
+          await Linking.openURL(paymentUrl);
+        } catch (linkError) {
+          const errorMessage = linkError instanceof Error ? linkError.message : 'Unknown error';
+          console.error('Failed to open payment URL:', errorMessage, paymentUrl);
+          
+          // Check if it's a specific linking error
+          if (errorMessage.includes('No Activity found') || errorMessage.includes('No app')) {
+            throw new Error('Cannot open payment page. Please check if the URL is valid.');
+          } else {
+            throw new Error(`Failed to open payment page: ${errorMessage}`);
+          }
+        }
+      } else {
+        throw new Error(response.message || 'Failed to initiate payment');
+      }
+    } catch (error) {
+      console.error('Payment initiation error:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Payment initiation failed';
+      
+      // Show more detailed error message
+      let userMessage = errorMessage;
+      if (errorMessage.includes('Failed to open')) {
+        userMessage = 'Unable to open payment page. Please check your internet connection and try again.';
+      } else if (errorMessage.includes('Invalid payment URL')) {
+        userMessage = 'Invalid payment URL received. Please contact support.';
+      } else if (errorMessage.includes('Payment URL not received')) {
+        userMessage = 'Payment server did not return a valid URL. Please try again.';
+      }
+      
+      Toast.show({
+        type: 'error',
+        text1: 'Payment failed',
+        text2: userMessage,
+        visibilityTime: 4000,
+      });
+    } finally {
+      setPaymentProcessing(false);
     }
   };
 
@@ -1144,21 +1288,12 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       ? isOfflineOverride 
       : !userIdToUse; // If no userId, it's offline (uses phone)
 
-    // Validate required parameters based on payment method
-    if (isOffline && !phoneToUse.trim()) {
+    // Phone number is required for both online and offline donations
+    if (!phoneToUse.trim()) {
       Toast.show({
         type: 'error',
         text1: 'Phone number required',
         text2: 'Please enter a phone number to fetch donations.',
-      });
-      return;
-    }
-
-    if (!isOffline && !userIdToUse) {
-      Toast.show({
-        type: 'error',
-        text1: 'User ID required',
-        text2: 'User ID is required for online donations.',
       });
       return;
     }
@@ -1191,8 +1326,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       }
 
       if (type === 'category') {
-        // For category donations, still use phone/userId in path (existing endpoint)
-        const identifier = isOffline ? phoneToUse : userIdToUse!;
+        // For category donations, use phone number for both online and offline
+        const identifier = phoneToUse;
         const response = await DonationService.getUserDonationsByCategory(identifier, categoryId, params);
         if (response.success && response.data) {
           if (reset) {
@@ -1216,13 +1351,9 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           setUserDonationsCategoryHasMore(page < response.data.pagination.totalPages);
         }
       } else {
-        // For overall donations, use query parameters based on payment method
+        // For overall donations, use phone number for both online and offline
         const overallParams = { ...params };
-        if (isOffline) {
-          overallParams.phone = phoneToUse;
-        } else {
-          overallParams.userId = userIdToUse;
-        }
+        overallParams.phone = phoneToUse;
         
         const response = await DonationService.getUserDonationsOverall(overallParams);
         if (response.success && response.data) {
@@ -2210,7 +2341,14 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       </TouchableOpacity>
 
       <View style={styles.headerCard}>
-        <Text style={styles.categoryLabel}>{categoryName}</Text>
+        <View style={styles.titleRow}>
+          <Text style={styles.categoryLabel}>{categoryName}</Text>
+          <TouchableOpacity
+            onPress={handleShareSubcategory}
+            style={styles.shareButton}>
+            <Icon name="share" size={16} color={colors.primary} />
+          </TouchableOpacity>
+        </View>
         <Text style={styles.subcategoryTitle}>{subcategoryTitle}</Text>
         {subcategoryDescription ? (
           <Text style={styles.subcategoryDescription}>{subcategoryDescription}</Text>
@@ -2283,16 +2421,18 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
             </Text>
             <View style={{ marginTop: 16, gap: 12 }}>
               <TouchableOpacity
-              //  style={styles.primaryOptionButton}
-              //  onPress={handleSelectOnlineDonation}
-                style={[styles.primaryOptionButton, styles.primaryOptionButtonDisabled]}
-                onPress={() => {
-                  Alert.alert('Coming soon', 'Online payment is not available yet.');
-                }}
-                disabled={true}
+                style={styles.primaryOptionButton}
+                onPress={handleSelectOnlineDonation}
+                disabled={paymentProcessing}
                 activeOpacity={0.9}>
-                <Icon name="credit-card" size={16} color="#fff" />
-                <Text style={styles.primaryOptionButtonText}>Online payment</Text>
+                {paymentProcessing ? (
+                  <ActivityIndicator size="small" color="#fff" />
+                ) : (
+                  <>
+                    <Icon name="credit-card" size={16} color="#fff" />
+                    <Text style={styles.primaryOptionButtonText}>Online payment</Text>
+                  </>
+                )}
               </TouchableOpacity>
               <TouchableOpacity
                 style={styles.secondaryOptionButton}
@@ -4378,11 +4518,22 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     gap: 6,
   },
+  titleRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 4,
+  },
+  shareButton: {
+    padding: 4,
+    borderRadius: 4,
+  },
   categoryLabel: {
     fontFamily: fonts.body,
     fontSize: 10,
     color: colors.textMuted,
     textTransform: 'uppercase',
+    flex: 1,
   },
   subcategoryTitle: {
     fontFamily: fonts.heading,

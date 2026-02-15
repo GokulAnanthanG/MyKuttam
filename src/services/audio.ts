@@ -63,6 +63,43 @@ const getAuthHeaders = async (): Promise<Record<string, string>> => {
 };
 
 export const AudioService = {
+  getAudioById: async (id: string): Promise<{ success: boolean; message: string; data: Audio }> => {
+    const { getStoredToken } = await import('../storage/userRealm');
+    const token = await getStoredToken();
+
+    const headers: HeadersInit = {
+      'Content-Type': 'application/json',
+    };
+
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+
+    const response = await fetch(endpoints.audioById(id), {
+      method: 'GET',
+      headers,
+    });
+
+    const text = await response.text();
+    let data: { success: boolean; message: string; data: Audio };
+
+    if (!text) {
+      throw new Error('Empty response from server');
+    }
+
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      throw new Error('Invalid JSON response from server');
+    }
+
+    if (!response.ok) {
+      throw new Error(data.message || `HTTP error! status: ${response.status}`);
+    }
+
+    return data;
+  },
+
   getAudios: async (page: number = 1, limit: number = 10, categoryId?: string | null): Promise<AudioResponse> => {
     const queryParams = new URLSearchParams();
     queryParams.append('page', String(page));

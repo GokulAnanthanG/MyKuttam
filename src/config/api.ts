@@ -72,6 +72,8 @@ export const endpoints = {
   // Music category endpoints
   musicCategories: `${BASE_URL}/api/music-categories`,
   musicCategoryById: (id: string) => `${BASE_URL}/api/music-categories/${id}`,
+  // Payment endpoints
+  initiatePayment: `${BASE_URL}/api/payments/initiate_payment`,
 };
 
 export const ENV = Config?.ENV || 'development';

@@ -379,7 +379,7 @@ export const DonationScreen = () => {
     Toast.show({
       type: 'info',
       text1: 'Donate now',
-      text2: 'Razorpay integration is being wired. Stay tuned!',
+      text2: 'Online payment is now available!',
     });
   };
 
