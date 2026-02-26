@@ -1,7 +1,6 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { ActivityIndicator, View, StyleSheet, Linking } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { useNavigation } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
 import { LoginScreen } from '../screens/LoginScreen';
 import { OtpScreen } from '../screens/OtpScreen';
@@ -10,10 +9,8 @@ import { ForgotPasswordScreen } from '../screens/ForgotPasswordScreen';
 import { AboutScreen } from '../screens/AboutScreen';
 import { ActiveUsersScreen } from '../screens/ActiveUsersScreen';
 import { BottomTabNavigator } from './BottomTabNavigator';
+import { navigationRef } from './navigationRef';
 import { colors } from '../theme/colors';
-import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
-import type { BottomTabNavigationProp } from '@react-navigation/bottom-tabs';
-import type { CompositeNavigationProp } from '@react-navigation/native';
 
 export type RootStackParamList = {
   Login: undefined;
@@ -27,80 +24,118 @@ export type RootStackParamList = {
 
 const Stack = createNativeStackNavigator<RootStackParamList>();
 
-type NavigationProp = CompositeNavigationProp<
-  NativeStackNavigationProp<RootStackParamList>,
-  BottomTabNavigationProp<any>
->;
+/** Wait until the navigation container is ready (needed for cold start). */
+function waitForNavigationReady(): Promise<void> {
+  return new Promise((resolve) => {
+    if (navigationRef.isReady()) {
+      resolve();
+      return;
+    }
+    const check = () => {
+      if (navigationRef.isReady()) {
+        resolve();
+      } else {
+        setTimeout(check, 50);
+      }
+    };
+    setTimeout(check, 50);
+  });
+}
+
+/** Navigate based on deep link URL. Handles cold start, background, and foreground. */
+function handleDeepLink(url: string): void {
+  if (!url) return;
+  console.log('Global deep link handler:', url);
+
+  // Parse news deep link: mykuttam://news/:id
+  const newsMatch = url.match(/mykuttam:\/\/news\/(.+)/);
+  if (newsMatch && newsMatch[1]) {
+    const newsId = newsMatch[1];
+    try {
+      (navigationRef as any).navigate('MainTabs', {
+        screen: 'Home',
+        params: { initialNewsId: newsId },
+      });
+    } catch (error) {
+      console.error('Failed to navigate to news:', error);
+    }
+    return;
+  }
+
+  // Parse gallery deep link: mykuttam://gallery/:id
+  const galleryMatch = url.match(/mykuttam:\/\/gallery\/(.+)/);
+  if (galleryMatch && galleryMatch[1]) {
+    const imageId = galleryMatch[1];
+    try {
+      (navigationRef as any).navigate('MainTabs', {
+        screen: 'Gallery',
+        params: { imageId },
+      });
+    } catch (error) {
+      console.error('Failed to navigate to gallery:', error);
+    }
+    return;
+  }
+
+  // Parse audio deep link: mykuttam://audio/:id
+  const audioMatch = url.match(/mykuttam:\/\/audio\/(.+)/);
+  if (audioMatch && audioMatch[1]) {
+    const audioId = audioMatch[1];
+    try {
+      (navigationRef as any).navigate('MainTabs', {
+        screen: 'Music',
+        params: { audioId },
+      });
+    } catch (error) {
+      console.error('Failed to navigate to music:', error);
+    }
+    return;
+  }
+
+  // Parse subcategory deep link: mykuttam://subcategory/:categoryId/:subcategoryId
+  const subcategoryMatch = url.match(/mykuttam:\/\/subcategory\/([^/]+)\/([^/]+)/);
+  if (subcategoryMatch && subcategoryMatch[1] && subcategoryMatch[2]) {
+    const categoryId = subcategoryMatch[1];
+    const subcategoryId = subcategoryMatch[2];
+    try {
+      (navigationRef as any).navigate('MainTabs', {
+        screen: 'Donation',
+        params: {
+          screen: 'SubcategoryDetail',
+          params: {
+            categoryId,
+            subcategoryId,
+          },
+        },
+      });
+    } catch (error) {
+      console.error('Failed to navigate to subcategory:', error);
+    }
+  }
+}
 
 export const AppNavigator = () => {
   const { isAuthenticated, initializing } = useAuth();
-  const navigationRef = useRef<NavigationProp | null>(null);
-  
-  // Global deep link handler for subcategory (when app opens from closed state)
+
+  // Global deep link handler: cold start, background, and foreground
   useEffect(() => {
-    if (!isAuthenticated) return; // Only handle deep links when authenticated
-    
-    const handleDeepLink = (url: string) => {
-      console.log('Global deep link handler:', url);
-      
-      // Parse audio deep link: mykuttam://audio/:id
-      const audioMatch = url.match(/mykuttam:\/\/audio\/(.+)/);
-      if (audioMatch && audioMatch[1]) {
-        const audioId = audioMatch[1];
-        
-        // Navigate to Music tab
-        setTimeout(() => {
-          try {
-            (navigationRef.current as any)?.navigate('MainTabs', {
-              screen: 'Music',
-            });
-            // The MusicScreen will handle the deep link and play the audio
-          } catch (error) {
-            console.error('Failed to navigate to music:', error);
-          }
-        }, 500);
-        return;
-      }
+    if (!isAuthenticated) return;
 
-      // Parse subcategory deep link: mykuttam://subcategory/:categoryId/:subcategoryId
-      const subcategoryMatch = url.match(/mykuttam:\/\/subcategory\/([^\/]+)\/([^\/]+)/);
-      if (subcategoryMatch && subcategoryMatch[1] && subcategoryMatch[2]) {
-        const categoryId = subcategoryMatch[1];
-        const subcategoryId = subcategoryMatch[2];
-        
-        // Navigate to Donation tab and then to SubcategoryDetail
-        // Note: This requires the navigation to be ready
-        setTimeout(() => {
-          try {
-            (navigationRef.current as any)?.navigate('MainTabs', {
-              screen: 'Donation',
-              params: {
-                screen: 'SubcategoryDetail',
-                params: {
-                  categoryId,
-                  subcategoryId,
-                  // Other params will be fetched by the screen
-                },
-              },
-            });
-          } catch (error) {
-            console.error('Failed to navigate to subcategory:', error);
-          }
-        }, 500);
-        return;
-      }
-    };
-
-    // Handle deep link when app opens from closed state
+    // Cold start: app opened from closed state via deep link
     Linking.getInitialURL().then((url) => {
-      if (url) {
+      if (!url) return;
+      waitForNavigationReady().then(() => {
         handleDeepLink(url);
-      }
+      });
     });
 
-    // Listen for deep links when app is open
+    // Foreground / background: app already open or coming back from background
     const subscription = Linking.addEventListener('url', (event) => {
-      handleDeepLink(event.url);
+      if (navigationRef.isReady()) {
+        handleDeepLink(event.url);
+      } else {
+        waitForNavigationReady().then(() => handleDeepLink(event.url));
+      }
     });
 
     return () => {

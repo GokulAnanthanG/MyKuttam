@@ -11,6 +11,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import Toast from 'react-native-toast-message';
 import { AppNavigator } from './src/navigation/AppNavigator';
+import { navigationRef } from './src/navigation/navigationRef';
 import { AuthProvider } from './src/context/AuthContext';
 import { PushNotificationHandler } from './src/components/PushNotificationHandler';
 import { colors } from './src/theme/colors';
@@ -65,7 +66,7 @@ function App() {
       <SafeAreaProvider>
         <StatusBar barStyle="dark-content" backgroundColor={colors.background} />
         <AuthProvider>
-          <NavigationContainer>
+          <NavigationContainer ref={navigationRef}>
             <PushNotificationHandler />
             <AppNavigator />
           </NavigationContainer>

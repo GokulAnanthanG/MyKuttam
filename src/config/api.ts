@@ -65,6 +65,7 @@ export const endpoints = {
   fcmToken: `${BASE_URL}/api/user/fcm-token`,
   // User role management endpoints
   updateUserRole: (phone: string) => `${BASE_URL}/api/users/${phone}/account-type-role`,
+  updateUserStatus: (phone: string) => `${BASE_URL}/api/users/${phone}/status`,
   users: `${BASE_URL}/api/users`,
   // Audio endpoints
   audio: `${BASE_URL}/api/audio`,
@@ -75,6 +76,8 @@ export const endpoints = {
   musicCategoryById: (id: string) => `${BASE_URL}/api/music-categories/${id}`,
   // Payment endpoints
   initiatePayment: `${BASE_URL}/api/payments/initiate_payment`,
+  // Control params endpoints (admin only)
+  controlParams: `${BASE_URL}/api/control-params`,
 };
 
 export const ENV = Config?.ENV || 'development';

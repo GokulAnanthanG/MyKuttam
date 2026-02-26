@@ -14,6 +14,7 @@ import {
   FlatList,
   ActivityIndicator,
   RefreshControl,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useNavigation } from '@react-navigation/native';
@@ -25,6 +26,7 @@ import {
   type MediaType,
 } from 'react-native-image-picker';
 import Icon from 'react-native-vector-icons/FontAwesome';
+import Toast from 'react-native-toast-message';
 import RBSheet from 'react-native-raw-bottom-sheet';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -33,6 +35,7 @@ import { AppTextInput } from '../components/AppTextInput';
 import { PrimaryButton } from '../components/PrimaryButton';
 import { RootStackParamList } from '../navigation/AppNavigator';
 import { UserService, type User } from '../services/user';
+import { ControlParamsService, type ControlParams } from '../services/controlParams';
 import { UserRole, AccountStatus, AccountType } from '../types/user';
 
 type NavigationProp = NativeStackNavigationProp<RootStackParamList>;
@@ -70,7 +73,14 @@ export const ProfileScreen = () => {
     role?: UserRole;
   }>({});
   const [expandedAddressUserId, setExpandedAddressUserId] = useState<string | null>(null);
+  const [updatingStatusUserId, setUpdatingStatusUserId] = useState<string | null>(null);
   const usersSheetRef = useRef<any>(null);
+
+  // Control params modal state (admin only)
+  const [showControlParamsModal, setShowControlParamsModal] = useState(false);
+  const [controlParams, setControlParams] = useState<ControlParams | null>(null);
+  const [loadingControlParams, setLoadingControlParams] = useState(false);
+  const [updatingControlParams, setUpdatingControlParams] = useState(false);
 
   const [formData, setFormData] = useState({
     name: currentUser?.name || '',
@@ -358,6 +368,49 @@ export const ProfileScreen = () => {
   // Available roles for selection
   const availableRoles: UserRole[] = ['ADMIN', 'SUB_ADMIN', 'HELPER', 'DONATION_MANAGER', 'USER'];
 
+  // Control params handlers (admin only)
+  const handleOpenControlParamsModal = async () => {
+    setShowControlParamsModal(true);
+    setLoadingControlParams(true);
+    try {
+      const response = await ControlParamsService.getControlParams();
+      if (response.success && response.data) {
+        setControlParams(response.data);
+      } else {
+        setControlParams({ id: null, IsEnableOnlinePayment: false, createdAt: null, updatedAt: null });
+      }
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'Failed to fetch control params',
+      );
+      setControlParams({ id: null, IsEnableOnlinePayment: false, createdAt: null, updatedAt: null });
+    } finally {
+      setLoadingControlParams(false);
+    }
+  };
+
+  const handleUpdateControlParams = async () => {
+    if (!controlParams) return;
+    setUpdatingControlParams(true);
+    try {
+      const response = await ControlParamsService.updateControlParams({
+        IsEnableOnlinePayment: controlParams.IsEnableOnlinePayment,
+      });
+      if (response.success && response.data) {
+        setControlParams(response.data);
+        Alert.alert('Success', 'Control params updated successfully');
+      }
+    } catch (error) {
+      Alert.alert(
+        'Error',
+        error instanceof Error ? error.message : 'Failed to update control params',
+      );
+    } finally {
+      setUpdatingControlParams(false);
+    }
+  };
+
   const handleRoleToggle = (role: UserRole) => {
     setRoleUpdateData((prev) => {
       const isSelected = prev.roles.includes(role);
@@ -373,6 +426,55 @@ export const ProfileScreen = () => {
         };
       }
     });
+  };
+
+  const handleUpdateUserStatus = async (user: User, newStatus: AccountStatus) => {
+    if (!isAdminOrSubAdmin()) {
+      Alert.alert('Access denied', 'Only ADMIN and SUB_ADMIN can update user status.');
+      return;
+    }
+    if (!isAdmin() && user.role.includes('ADMIN')) {
+      Alert.alert('Access denied', 'SUB_ADMIN cannot update ADMIN user status.');
+      return;
+    }
+    if (user.status === newStatus) return;
+
+    Alert.alert(
+      'Update Status',
+      `Change ${user.name}'s status to ${newStatus}?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Update',
+          onPress: async () => {
+            setUpdatingStatusUserId(user.id);
+            try {
+              const response = await UserService.updateUserStatus(user.phone, newStatus);
+              if (response.success) {
+                Toast.show({
+                  type: 'success',
+                  text1: 'Status updated',
+                  text2: `${user.name}'s status has been updated to ${newStatus}.`,
+                });
+                setUsers((prev) =>
+                  prev.map((u) =>
+                    u.id === user.id ? { ...u, status: newStatus } : u
+                  )
+                );
+              }
+            } catch (err) {
+              Toast.show({
+                type: 'error',
+                text1: 'Update failed',
+                text2: err instanceof Error ? err.message : 'Failed to update status',
+              });
+            } finally {
+              setUpdatingStatusUserId(null);
+            }
+          },
+        },
+      ]
+    );
   };
 
   const handleUpdateRole = async () => {
@@ -481,6 +583,19 @@ export const ProfileScreen = () => {
             <Icon name="chevron-right" size={16} color={colors.textMuted} />
           </View>
         </Pressable>
+
+        {/* Control Params Link - Admin only */}
+        {isAdmin() && (
+          <Pressable
+            onPress={handleOpenControlParamsModal}
+            style={styles.aboutLink}>
+            <View style={styles.aboutLinkContent}>
+              <Icon name="cog" size={18} color={colors.primary} />
+              <Text style={styles.aboutLinkText}>Control Params</Text>
+              <Icon name="chevron-right" size={16} color={colors.textMuted} />
+            </View>
+          </Pressable>
+        )}
 
         {/* Avatar Section */}
         <View style={styles.avatarSection}>
@@ -887,6 +1002,74 @@ export const ProfileScreen = () => {
         </View>
       </Modal>
 
+      {/* Control Params Modal - Admin only */}
+      <Modal
+        visible={showControlParamsModal}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setShowControlParamsModal(false)}>
+        <View style={styles.resetPasswordModalOverlay}>
+          <TouchableWithoutFeedback onPress={() => setShowControlParamsModal(false)}>
+            <View style={styles.modalContent}>
+              <TouchableWithoutFeedback>
+                <View style={styles.roleUpdateContainer}>
+                  <View style={styles.resetPasswordHeader}>
+                    <Text style={styles.resetPasswordTitle}>Control Params</Text>
+                    <Pressable
+                      onPress={() => setShowControlParamsModal(false)}
+                      style={styles.closeButton}>
+                      <Icon name="times" size={20} color={colors.text} />
+                    </Pressable>
+                  </View>
+
+                  {loadingControlParams ? (
+                    <View style={styles.controlParamsLoading}>
+                      <ActivityIndicator size="large" color={colors.primary} />
+                      <Text style={styles.controlParamsLoadingText}>Loading params...</Text>
+                    </View>
+                  ) : controlParams ? (
+                    <ScrollView
+                      style={styles.roleUpdateScrollView}
+                      contentContainerStyle={styles.roleUpdateForm}
+                      showsVerticalScrollIndicator={false}>
+                      <View style={styles.controlParamsRow}>
+                        <View style={styles.controlParamsLabelWrap}>
+                          <Icon name="credit-card" size={18} color={colors.primary} />
+                          <Text style={styles.controlParamsLabel}>Enable Online Payment</Text>
+                        </View>
+                        <Switch
+                          value={controlParams.IsEnableOnlinePayment}
+                          onValueChange={(value) =>
+                            setControlParams({ ...controlParams, IsEnableOnlinePayment: value })
+                          }
+                          trackColor={{ false: colors.border, true: colors.primary + '80' }}
+                          thumbColor={controlParams.IsEnableOnlinePayment ? colors.primary : colors.textMuted}
+                        />
+                      </View>
+
+                      <View style={styles.resetPasswordButtons}>
+                        <PrimaryButton
+                          label="Cancel"
+                          onPress={() => setShowControlParamsModal(false)}
+                          variant="secondary"
+                          style={styles.resetPasswordCancelButton}
+                        />
+                        <PrimaryButton
+                          label="Update"
+                          onPress={handleUpdateControlParams}
+                          loading={updatingControlParams}
+                          style={styles.resetPasswordSubmitButton}
+                        />
+                      </View>
+                    </ScrollView>
+                  ) : null}
+                </View>
+              </TouchableWithoutFeedback>
+            </View>
+          </TouchableWithoutFeedback>
+        </View>
+      </Modal>
+
       {/* Users List Bottom Sheet */}
       <RBSheet
         ref={usersSheetRef}
@@ -1086,6 +1269,37 @@ export const ProfileScreen = () => {
                               </View>
                             )}
                           </View>
+
+                          {/* Update Status - ADMIN/SUB_ADMIN only; SUB_ADMIN cannot update ADMIN */}
+                          {isAdminOrSubAdmin() && (isAdmin() || !item.role.includes('ADMIN')) && (
+                            <View style={styles.userStatusActionsRow}>
+                              <Text style={styles.userStatusActionsLabel}>Update status:</Text>
+                              {updatingStatusUserId === item.id ? (
+                                <ActivityIndicator size="small" color={colors.primary} />
+                              ) : (
+                                <View style={styles.userStatusActions}>
+                                  {(['ACTIVE', 'BLOCK', 'SUSPENDED'] as AccountStatus[]).map((s) => (
+                                    <TouchableOpacity
+                                      key={s}
+                                      style={[
+                                        styles.userStatusActionButton,
+                                        item.status === s && styles.userStatusActionButtonActive,
+                                      ]}
+                                      onPress={() => handleUpdateUserStatus(item, s)}
+                                      activeOpacity={0.7}>
+                                      <Text
+                                        style={[
+                                          styles.userStatusActionButtonText,
+                                          item.status === s && styles.userStatusActionButtonTextActive,
+                                        ]}>
+                                        {s}
+                                      </Text>
+                                    </TouchableOpacity>
+                                  ))}
+                                </View>
+                              )}
+                            </View>
+                          )}
                           
                           {/* Address Accordion */}
                           {item.address && (
@@ -1628,6 +1842,40 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     letterSpacing: 0.3,
   },
+  controlParamsLoading: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 60,
+    gap: 16,
+  },
+  controlParamsLoadingText: {
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.textMuted,
+  },
+  controlParamsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: 16,
+    paddingHorizontal: 4,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border,
+  },
+  controlParamsLabelWrap: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    flex: 1,
+  },
+  controlParamsLabel: {
+    fontFamily: fonts.heading,
+    fontSize: 16,
+    color: colors.text,
+    fontWeight: '600',
+    letterSpacing: 0.3,
+  },
   rolesList: {
     gap: 12,
   },
@@ -1892,6 +2140,49 @@ const styles = StyleSheet.create({
     paddingTop: 12,
     borderTopWidth: 1,
     borderTopColor: colors.border,
+  },
+  userStatusActionsRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    alignItems: 'center',
+    gap: 8,
+    paddingTop: 12,
+    marginTop: 8,
+    borderTopWidth: 1,
+    borderTopColor: colors.border,
+  },
+  userStatusActionsLabel: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  userStatusActions: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+  },
+  userStatusActionButton: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.cardMuted,
+  },
+  userStatusActionButtonActive: {
+    borderColor: colors.primary,
+    backgroundColor: colors.primary + '15',
+  },
+  userStatusActionButtonText: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.text,
+    fontWeight: '500',
+  },
+  userStatusActionButtonTextActive: {
+    color: colors.primary,
+    fontWeight: '600',
   },
   userDetailRow: {
     flexDirection: 'row',

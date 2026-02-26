@@ -33,7 +33,8 @@ export type DonationManagerMapping = {
   paymentImage?: string | null;
   accountHolderName?: string | null;
   isUseNumberForUPI?: boolean;
-  createdBy: string;
+  VPA_id?: string | null;
+  createdBy?: string;
   createdAt: string;
 };
 
@@ -52,11 +53,12 @@ export type DonationManagersListResponse = {
 };
 
 export type DonationManagerWithMapping = DonationManager & {
-  mappedAt: string;
+  mappedAt?: string;
   paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
   paymentImage?: string | null;
   accountHolderName?: string | null;
   isUseNumberForUPI?: boolean;
+  VPA_id?: string | null;
 };
 
 export type DonationManagersBySubcategoryResponse = {
@@ -101,6 +103,17 @@ export type CreateMappingPayload = {
   paymentImage?: string;
   accountHolderName?: string;
   isUseNumberForUPI?: boolean;
+  VPA_id?: string;
+};
+
+export type UpdateMappingPayload = {
+  donation_manager_id: string;
+  subcategory_id: string;
+  paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
+  accountHolderName?: string;
+  isUseNumberForUPI?: boolean;
+  VPA_id?: string;
+  paymentImage?: string;
 };
 
 export type DeleteMappingPayload = {
@@ -206,6 +219,26 @@ export const DonationManagerMappingService = {
 
     if (!response.ok) {
       throw new Error(data.message || 'Failed to create mapping');
+    }
+
+    return data;
+  },
+
+  updateMapping: async (payload: UpdateMappingPayload): Promise<MappingResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.donationManagerMappings, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    const text = await response.text();
+    const data: MappingResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update mapping');
     }
 
     return data;

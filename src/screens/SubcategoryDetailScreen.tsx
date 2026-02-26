@@ -125,19 +125,35 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const { currentUser } = useAuth();
   const {
     categoryId,
-    categoryName,
+    categoryName: paramCategoryName,
     subcategoryId,
-    subcategoryTitle,
+    subcategoryTitle: paramSubcategoryTitle,
     subcategoryDescription,
     subcategoryType,
     subcategoryAmount,
     managers,
-    subcategoryIncome = 0,
-    subcategoryExpense = 0,
-    subcategoryNet = 0,
+    subcategoryIncome: paramSubcategoryIncome,
+    subcategoryExpense: paramSubcategoryExpense,
+    subcategoryNet: paramSubcategoryNet,
     categoryStatus = 'active',
     subcategoryStatus = 'active',
   } = route.params;
+
+  // Resolved names and summary when opened via deep link (only categoryId/subcategoryId in params)
+  const [resolvedCategoryName, setResolvedCategoryName] = useState<string | null>(null);
+  const [resolvedSubcategoryTitle, setResolvedSubcategoryTitle] = useState<string | null>(null);
+  const [resolvedSubcategoryIncome, setResolvedSubcategoryIncome] = useState<number | null>(null);
+  const [resolvedSubcategoryExpense, setResolvedSubcategoryExpense] = useState<number | null>(null);
+  const [resolvedSubcategoryNet, setResolvedSubcategoryNet] = useState<number | null>(null);
+  const [resolvedSubcategoryType, setResolvedSubcategoryType] = useState<'open_donation' | 'specific_amount' | null>(null);
+  const [resolvedSubcategoryAmount, setResolvedSubcategoryAmount] = useState<number | null>(null);
+  const categoryName = paramCategoryName ?? resolvedCategoryName ?? '';
+  const subcategoryTitle = paramSubcategoryTitle ?? resolvedSubcategoryTitle ?? '';
+  const displayIncome = paramSubcategoryIncome ?? resolvedSubcategoryIncome ?? 0;
+  const displayExpense = paramSubcategoryExpense ?? resolvedSubcategoryExpense ?? 0;
+  const displayNet = paramSubcategoryNet ?? resolvedSubcategoryNet ?? 0;
+  const effectiveSubcategoryType = (subcategoryType ?? resolvedSubcategoryType) as 'open_donation' | 'specific_amount' | undefined;
+  const effectiveSubcategoryAmount = subcategoryAmount ?? resolvedSubcategoryAmount ?? undefined;
 
   const [donations, setDonations] = useState<DonationRecord[]>([]);
   const [expenses, setExpenses] = useState<ExpenseRecord[]>([]);
@@ -203,12 +219,20 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
   // Donation manager mapping states
   const [mappingModalVisible, setMappingModalVisible] = useState(false);
+  const [mappingModalTab, setMappingModalTab] = useState<'map' | 'manage'>('map');
   const [donationManagers, setDonationManagers] = useState<DonationManager[]>([]);
-  const [currentMappings, setCurrentMappings] = useState<Set<string>>(new Set());
-  const [selectedManagers, setSelectedManagers] = useState<Set<string>>(new Set());
   const [mappingLoading, setMappingLoading] = useState(false);
-  const [mappingSubmitting, setMappingSubmitting] = useState(false);
   const [subcategoryManagers, setSubcategoryManagers] = useState<DonationManagerWithMapping[]>([]);
+
+  // Map Manager: click name -> input modal
+  const [selectedManagerForMap, setSelectedManagerForMap] = useState<DonationManager | null>(null);
+  const [mapManagerInputModalVisible, setMapManagerInputModalVisible] = useState(false);
+  const [mapManagerSubmitting, setMapManagerSubmitting] = useState(false);
+
+  // Edit Mapping: Manage tab -> edit icon
+  const [selectedManagerForEdit, setSelectedManagerForEdit] = useState<DonationManagerWithMapping | null>(null);
+  const [editMappingModalVisible, setEditMappingModalVisible] = useState(false);
+  const [editMappingSubmitting, setEditMappingSubmitting] = useState(false);
 
   type MappingDetails = {
     paymentMethod?: 'UPI' | 'BANK_ACCOUNT';
@@ -216,6 +240,7 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     paymentImage?: string; // base64 or URL / data URI
     paymentImagePreviewUri?: string;
     isUseNumberForUPI?: boolean;
+    VPA_id?: string;
   };
 
   const [mappingDetails, setMappingDetails] = useState<Record<string, MappingDetails>>({});
@@ -281,6 +306,12 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   const [paymentAmountModalVisible, setPaymentAmountModalVisible] = useState(false);
   const [paymentAmount, setPaymentAmount] = useState('');
   const [paymentProcessing, setPaymentProcessing] = useState(false);
+
+  // UPI Pay Now (offline donation modal)
+  const [upiPayManager, setUpiPayManager] = useState<DonationManagerWithMapping | null>(null);
+  const [upiPayAmountModalVisible, setUpiPayAmountModalVisible] = useState(false);
+  const [upiPayInfoModalVisible, setUpiPayInfoModalVisible] = useState(false);
+  const [upiPayAmount, setUpiPayAmount] = useState('');
 
   const canManageSubcategory = useMemo(() => {
     if (!currentUser || currentUser.account_type !== 'MANAGEMENT') {
@@ -456,12 +487,14 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         // Initialize mapping details from server data (if available)
         const initialDetails: Record<string, MappingDetails> = {};
         managersWithMapping.forEach((manager) => {
+          const m = manager as DonationManagerWithMapping & { VPA_id?: string };
           initialDetails[manager.id] = {
             paymentMethod: manager.paymentMethod,
             accountHolderName: manager.accountHolderName || undefined,
             paymentImage: manager.paymentImage || undefined,
             paymentImagePreviewUri: manager.paymentImage || undefined,
             isUseNumberForUPI: manager.isUseNumberForUPI,
+            VPA_id: m.VPA_id || undefined,
           };
         });
         setMappingDetails(initialDetails);
@@ -550,6 +583,39 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     };
   }, [fetchDonations, fetchExpenses, fetchSubcategoryManagers]);
 
+  // When opened via deep link (only categoryId/subcategoryId), fetch category/subcategory names and type/amount
+  useEffect(() => {
+    const hasNames = !!(paramCategoryName?.trim() && paramSubcategoryTitle?.trim());
+    const hasValidType = subcategoryType === 'open_donation' || subcategoryType === 'specific_amount';
+    if (hasNames && hasValidType) {
+      return; // Already have all needed data from params
+    }
+    let isMounted = true;
+    const resolveNames = async () => {
+      try {
+        const response = await DonationService.getCategoriesSummary();
+        if (!response.success || !response.data || !isMounted) return;
+        const category = response.data.find((c) => c.id === categoryId);
+        const sub = category?.subcategories?.find((s) => s.id === subcategoryId);
+        if (isMounted && category && sub) {
+          setResolvedCategoryName(category.name);
+          setResolvedSubcategoryTitle(sub.title);
+          setResolvedSubcategoryIncome(sub.totalIncome ?? 0);
+          setResolvedSubcategoryExpense(sub.totalExpense ?? 0);
+          setResolvedSubcategoryNet(sub.netAmount ?? 0);
+          setResolvedSubcategoryType((sub.type === 'open_donation' || sub.type === 'specific_amount') ? sub.type : null);
+          setResolvedSubcategoryAmount(sub.amount ?? null);
+        }
+      } catch {
+        // ignore
+      }
+    };
+    resolveNames();
+    return () => {
+      isMounted = false;
+    };
+  }, [categoryId, subcategoryId, paramCategoryName, paramSubcategoryTitle]);
+
   // Refresh managers when screen comes into focus (e.g., after mapping changes)
   useFocusEffect(
     useCallback(() => {
@@ -605,30 +671,17 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       return;
     }
     setMappingModalVisible(true);
+    setMappingModalTab('map');
     setMappingLoading(true);
     try {
-      // Fetch all donation managers
-      const managersResponse = await DonationManagerMappingService.getDonationManagers({
-        page: 1,
-        limit: 100, // Get all managers
-      });
+      const [managersResponse] = await Promise.all([
+        DonationManagerMappingService.getDonationManagers({ page: 1, limit: 100 }),
+        fetchSubcategoryManagers(),
+      ]);
       if (managersResponse.success && managersResponse.data) {
         setDonationManagers(managersResponse.data.donation_managers);
       }
-
-      // Fetch current mappings for this subcategory
-      const mappingsResponse = await DonationManagerMappingService.getMappings({
-        subcategory_id: subcategoryId,
-        page: 1,
-        limit: 100,
-      });
-      if (mappingsResponse.success && mappingsResponse.data) {
-        const mappedIds = new Set(
-          mappingsResponse.data.mappings.map((m) => m.donation_manager._id),
-        );
-        setCurrentMappings(mappedIds);
-        setSelectedManagers(new Set(mappedIds)); // Initialize with current mappings
-      }
+      // subcategoryManagers refreshed by fetchSubcategoryManagers
     } catch (err) {
       Toast.show({
         type: 'error',
@@ -640,6 +693,138 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     }
   };
 
+  const handleOpenMapManagerInput = (manager: DonationManager) => {
+    setSelectedManagerForMap(manager);
+    setMappingDetails((prev) => ({ ...prev, [manager.id]: {} }));
+    setMapManagerInputModalVisible(true);
+  };
+
+  const handlePostMapManager = async () => {
+    if (!selectedManagerForMap) return;
+    const details = mappingDetails[selectedManagerForMap.id] || {};
+    setMapManagerSubmitting(true);
+    try {
+      const response = await DonationManagerMappingService.createMapping({
+        donation_manager_id: selectedManagerForMap.id,
+        subcategory_id: subcategoryId,
+        paymentMethod: details.paymentMethod,
+        paymentImage: details.paymentImage,
+        accountHolderName: details.accountHolderName,
+        isUseNumberForUPI: details.isUseNumberForUPI,
+        VPA_id: details.VPA_id,
+      });
+      if (response.success) {
+        Toast.show({ type: 'success', text1: 'Manager mapped', text2: `${selectedManagerForMap.name} has been mapped successfully.` });
+        setMapManagerInputModalVisible(false);
+        setSelectedManagerForMap(null);
+        await fetchSubcategoryManagers();
+      } else {
+        throw new Error(response.message);
+      }
+    } catch (err) {
+      Toast.show({
+        type: 'error',
+        text1: 'Failed to map manager',
+        text2: err instanceof Error ? err.message : 'Please try again.',
+      });
+    } finally {
+      setMapManagerSubmitting(false);
+    }
+  };
+
+  const handleOpenEditMapping = (manager: DonationManagerWithMapping) => {
+    setSelectedManagerForEdit(manager);
+    const imgUri = manager.paymentImage && (manager.paymentImage.startsWith('http') || manager.paymentImage.startsWith('data:'))
+      ? manager.paymentImage
+      : manager.paymentImage
+        ? `data:image/jpeg;base64,${manager.paymentImage}`
+        : undefined;
+    setMappingDetails((prev) => ({
+      ...prev,
+      [manager.id]: {
+        paymentMethod: manager.paymentMethod,
+        accountHolderName: manager.accountHolderName || undefined,
+        paymentImage: manager.paymentImage || undefined,
+        paymentImagePreviewUri: imgUri,
+        isUseNumberForUPI: manager.isUseNumberForUPI,
+        VPA_id: (manager as DonationManagerWithMapping & { VPA_id?: string }).VPA_id || undefined,
+      },
+    }));
+    setEditMappingModalVisible(true);
+  };
+
+  const handleUpdateMapping = async () => {
+    if (!selectedManagerForEdit) return;
+    const details = mappingDetails[selectedManagerForEdit.id] || {};
+    const payload: Parameters<typeof DonationManagerMappingService.updateMapping>[0] = {
+      donation_manager_id: selectedManagerForEdit.id,
+      subcategory_id: subcategoryId,
+    };
+    if (details.paymentMethod !== undefined) payload.paymentMethod = details.paymentMethod;
+    if (details.accountHolderName !== undefined) payload.accountHolderName = details.accountHolderName;
+    if (details.isUseNumberForUPI !== undefined) payload.isUseNumberForUPI = details.isUseNumberForUPI;
+    if (details.VPA_id !== undefined) payload.VPA_id = details.VPA_id;
+    if (details.paymentImage !== undefined) payload.paymentImage = details.paymentImage;
+    if (Object.keys(payload).length <= 2) {
+      Toast.show({ type: 'info', text1: 'No changes', text2: 'Update at least one field.' });
+      return;
+    }
+    setEditMappingSubmitting(true);
+    try {
+      const response = await DonationManagerMappingService.updateMapping(payload);
+      if (response.success) {
+        Toast.show({ type: 'success', text1: 'Mapping updated', text2: 'Manager mapping has been updated.' });
+        setEditMappingModalVisible(false);
+        setSelectedManagerForEdit(null);
+        await fetchSubcategoryManagers();
+      } else {
+        throw new Error(response.message);
+      }
+    } catch (err) {
+      Toast.show({
+        type: 'error',
+        text1: 'Update failed',
+        text2: err instanceof Error ? err.message : 'Please try again.',
+      });
+    } finally {
+      setEditMappingSubmitting(false);
+    }
+  };
+
+  const handleDeleteMapping = (manager: DonationManagerWithMapping) => {
+    Alert.alert(
+      'Remove Manager',
+      `Remove ${manager.name} from this subcategory?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const response = await DonationManagerMappingService.deleteMapping({
+                donation_manager_id: manager.id,
+                subcategory_id: subcategoryId,
+              });
+              if (response.success) {
+                Toast.show({ type: 'success', text1: 'Manager removed', text2: `${manager.name} has been removed from this subcategory.` });
+                await fetchSubcategoryManagers();
+              } else {
+                throw new Error(response.message);
+              }
+            } catch (err) {
+              Toast.show({
+                type: 'error',
+                text1: 'Remove failed',
+                text2: err instanceof Error ? err.message : 'Please try again.',
+              });
+            }
+          },
+        },
+      ]
+    );
+  };
+
   const handleOpenEditSubcategoryModal = () => {
     if (!currentUser?.role || !currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r))) {
       Alert.alert('Access denied', 'Only ADMIN and SUB_ADMIN can edit subcategories.');
@@ -648,8 +833,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     // Initialize form with current values
     setEditSubcategoryTitle(subcategoryTitle);
     setEditSubcategoryDescription(subcategoryDescription || '');
-    setEditSubcategoryType(subcategoryType as 'open_donation' | 'specific_amount');
-    setEditSubcategoryAmount(subcategoryAmount ? String(subcategoryAmount) : '');
+    setEditSubcategoryType((effectiveSubcategoryType || 'open_donation') as 'open_donation' | 'specific_amount');
+    setEditSubcategoryAmount(effectiveSubcategoryAmount ? String(effectiveSubcategoryAmount) : '');
     setEditSubcategoryConfirmText('');
     setEditSubcategoryModalVisible(true);
   };
@@ -705,18 +890,18 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       if (editSubcategoryDescription.trim() !== (subcategoryDescription || '')) {
         payload.description = editSubcategoryDescription.trim() || undefined;
       }
-      if (editSubcategoryType !== subcategoryType) {
+      if (editSubcategoryType !== (effectiveSubcategoryType || 'open_donation')) {
         payload.type = editSubcategoryType;
         payload.amount = parsedAmount;
       } else if (editSubcategoryType === 'specific_amount') {
-        const currentAmount = subcategoryAmount || 0;
+        const currentAmount = effectiveSubcategoryAmount || 0;
         if (parsedAmount !== currentAmount) {
           payload.amount = parsedAmount;
         }
       }
 
       // If switching from specific_amount to open_donation, ensure amount is null
-      if (subcategoryType === 'specific_amount' && editSubcategoryType === 'open_donation') {
+      if (effectiveSubcategoryType === 'specific_amount' && editSubcategoryType === 'open_donation') {
         payload.amount = null;
       }
 
@@ -743,8 +928,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           navigation.setParams({
             subcategoryTitle: response.data.title || subcategoryTitle,
             subcategoryDescription: response.data.description || subcategoryDescription,
-            subcategoryType: (response.data.type as 'open_donation' | 'specific_amount') || subcategoryType,
-            subcategoryAmount: response.data.amount || subcategoryAmount,
+            subcategoryType: (response.data.type as 'open_donation' | 'specific_amount') || effectiveSubcategoryType,
+            subcategoryAmount: response.data.amount ?? effectiveSubcategoryAmount,
           });
         }
         // Refresh the data
@@ -761,18 +946,6 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
     } finally {
       setEditSubcategorySubmitting(false);
     }
-  };
-
-  const handleToggleManagerSelection = (managerId: string) => {
-    setSelectedManagers((prev) => {
-      const next = new Set(prev);
-      if (next.has(managerId)) {
-        next.delete(managerId);
-      } else {
-        next.add(managerId);
-      }
-      return next;
-    });
   };
 
   const handleSelectPaymentMethodForManager = (
@@ -794,6 +967,16 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
       [managerId]: {
         ...(prev[managerId] || {}),
         accountHolderName: value,
+      },
+    }));
+  };
+
+  const handleChangeVPAId = (managerId: string, value: string) => {
+    setMappingDetails((prev) => ({
+      ...prev,
+      [managerId]: {
+        ...(prev[managerId] || {}),
+        VPA_id: value.trim() || undefined,
       },
     }));
   };
@@ -848,60 +1031,6 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         }));
       }
     });
-  };
-
-  const handleSaveMappings = async () => {
-    setMappingSubmitting(true);
-    try {
-      // Find managers to add (in selected but not in current)
-      const toAdd = Array.from(selectedManagers).filter((id) => !currentMappings.has(id));
-      // Find managers to remove (in current but not in selected)
-      const toRemove = Array.from(currentMappings).filter((id) => !selectedManagers.has(id));
-
-      // Create new mappings
-      const addPromises = toAdd.map((managerId) => {
-        const details = mappingDetails[managerId] || {};
-        return DonationManagerMappingService.createMapping({
-          donation_manager_id: managerId,
-          subcategory_id: subcategoryId,
-          paymentMethod: details.paymentMethod,
-          paymentImage: details.paymentImage,
-          accountHolderName: details.accountHolderName,
-          isUseNumberForUPI: details.isUseNumberForUPI,
-        });
-      });
-
-      // Delete removed mappings
-      const removePromises = toRemove.map((managerId) =>
-        DonationManagerMappingService.deleteMapping({
-          donation_manager_id: managerId,
-          subcategory_id: subcategoryId,
-        }),
-      );
-
-      await Promise.all([...addPromises, ...removePromises]);
-
-      Toast.show({
-        type: 'success',
-        text1: 'Mappings updated',
-        text2: 'Donation manager mappings have been updated successfully.',
-      });
-      setMappingModalVisible(false);
-      // Reset state
-      setSelectedManagers(new Set());
-      setCurrentMappings(new Set());
-      setDonationManagers([]);
-      // Refresh the managers list in the header
-      await fetchSubcategoryManagers();
-    } catch (err) {
-      Toast.show({
-        type: 'error',
-        text1: 'Unable to save mappings',
-        text2: err instanceof Error ? err.message : 'Please try again later.',
-      });
-    } finally {
-      setMappingSubmitting(false);
-    }
   };
 
   const handleDonateNow = () => {
@@ -975,9 +1104,9 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
   };
 
   const startOnlineDonationFlow = () => {
-    if (subcategoryType === 'specific_amount') {
+    if (effectiveSubcategoryType === 'specific_amount') {
       // Direct payment for specific amount
-      if (!subcategoryAmount || subcategoryAmount <= 0) {
+      if (!effectiveSubcategoryAmount || effectiveSubcategoryAmount <= 0) {
         Toast.show({
           type: 'error',
           text1: 'Invalid amount',
@@ -985,8 +1114,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         });
         return;
       }
-      initiatePayment(subcategoryAmount);
-    } else if (subcategoryType === 'open_donation') {
+      initiatePayment(effectiveSubcategoryAmount);
+    } else if (effectiveSubcategoryType === 'open_donation') {
       // Show amount input modal for open donation
       setPaymentAmount('');
       setPaymentAmountModalVisible(true);
@@ -1168,6 +1297,62 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         text2: 'Please make sure WhatsApp is installed on your device.',
       });
     });
+  };
+
+  const handlePayNowClick = (manager: DonationManagerWithMapping) => {
+    const details = mappingDetails[manager.id] || {};
+    const vpaId = details.VPA_id || (manager as DonationManagerWithMapping & { VPA_id?: string }).VPA_id;
+    if (!vpaId) {
+      Toast.show({ type: 'error', text1: 'VPA ID missing', text2: 'Manager UPI ID is not available.' });
+      return;
+    }
+    setUpiPayManager(manager);
+    if (effectiveSubcategoryType === 'specific_amount' && effectiveSubcategoryAmount && effectiveSubcategoryAmount > 0) {
+      setUpiPayAmount(String(effectiveSubcategoryAmount));
+      setUpiPayInfoModalVisible(true);
+    } else {
+      setUpiPayAmount('');
+      setUpiPayAmountModalVisible(true);
+    }
+  };
+
+  const handleUpiPayAmountConfirm = () => {
+    const amt = parseFloat(upiPayAmount.replace(/[^\d.]/g, ''));
+    if (isNaN(amt) || amt <= 0) {
+      Toast.show({ type: 'error', text1: 'Invalid amount', text2: 'Please enter a valid amount.' });
+      return;
+    }
+    setUpiPayAmount(String(amt));
+    setUpiPayAmountModalVisible(false);
+    setUpiPayInfoModalVisible(true);
+  };
+
+  const handleUpiPayInfoOk = async () => {
+    if (!upiPayManager) return;
+    const details = mappingDetails[upiPayManager.id] || {};
+    const vpaId = details.VPA_id || (upiPayManager as DonationManagerWithMapping & { VPA_id?: string }).VPA_id;
+    if (!vpaId) {
+      Toast.show({ type: 'error', text1: 'VPA ID missing', text2: 'Manager UPI ID is not available.' });
+      setUpiPayInfoModalVisible(false);
+      setUpiPayManager(null);
+      return;
+    }
+    const amt = parseFloat(upiPayAmount.replace(/[^\d.]/g, ''));
+    if (isNaN(amt) || amt <= 0) {
+      Toast.show({ type: 'error', text1: 'Invalid amount', text2: 'Please enter a valid amount.' });
+      setUpiPayInfoModalVisible(false);
+      setUpiPayManager(null);
+      return;
+    }
+    const encodedName = encodeURIComponent(upiPayManager.name || 'Manager');
+    const url = `upi://pay?pa=${encodeURIComponent(vpaId)}&pn=${encodedName}&am=${amt.toFixed(2)}&cu=INR`;
+    try {
+      await Linking.openURL(url);
+    } catch (e) {
+      Toast.show({ type: 'error', text1: 'Failed to open UPI', text2: 'No UPI app found or unable to open. Please install a UPI app.' });
+    }
+    setUpiPayInfoModalVisible(false);
+    setUpiPayManager(null);
   };
 
   const handleViewDonorDonations = (donation: DonationRecord) => {
@@ -2204,7 +2389,9 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
 
   const renderListHeader = () => (
     <View style={styles.listHeaderContainer}>
-      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+      <TouchableOpacity
+        style={styles.backButton}
+        onPress={() => navigation.navigate('DonationSummary')}>
         <Icon name="arrow-left" size={16} color={colors.text} />
         <Text style={styles.backButtonText}>Back to summary</Text>
       </TouchableOpacity>
@@ -2225,11 +2412,11 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         <View style={styles.summaryStatsRow}>
           <View style={styles.summaryStat}>
             <Text style={styles.summaryStatLabel}>Income</Text>
-            <Text style={[styles.summaryStatValue, styles.netPositive]}>{formatCurrency(subcategoryIncome)}</Text>
+            <Text style={[styles.summaryStatValue, styles.netPositive]}>{formatCurrency(displayIncome)}</Text>
           </View>
           <View style={styles.summaryStat}>
             <Text style={styles.summaryStatLabel}>Expense</Text>
-            <Text style={[styles.summaryStatValue, styles.netNegative]}>{formatCurrency(subcategoryExpense)}</Text>
+            <Text style={[styles.summaryStatValue, styles.netNegative]}>{formatCurrency(displayExpense)}</Text>
           </View>
         </View>
         <View style={styles.netBalanceRow}>
@@ -2237,9 +2424,9 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
           <Text
             style={[
               styles.netBalanceValue,
-              (subcategoryNet || 0) >= 0 ? styles.netBalancePositive : styles.netBalanceNegative,
+              (displayNet || 0) >= 0 ? styles.netBalancePositive : styles.netBalanceNegative,
             ]}>
-            {formatCurrency(subcategoryNet)}
+            {formatCurrency(displayNet)}
           </Text>
         </View>
         {subcategoryManagers.length > 0 ? (
@@ -2291,24 +2478,24 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
             <View style={{ marginTop: 16, gap: 12 }}>
               <TouchableOpacity
                 style={styles.primaryOptionButton}
+                onPress={handleSelectOfflineDonation}
+                activeOpacity={0.9}>
+                <Icon name="bank" size={16} color="#fff" />
+                <Text style={styles.primaryOptionButtonText}>Offline (bank / UPI)</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.secondaryOptionButton}
                 onPress={handleSelectOnlineDonation}
                 disabled={paymentProcessing}
                 activeOpacity={0.9}>
                 {paymentProcessing ? (
-                  <ActivityIndicator size="small" color="#fff" />
+                  <ActivityIndicator size="small" color={colors.primary} />
                 ) : (
                   <>
-                    <Icon name="credit-card" size={16} color="#fff" />
-                    <Text style={styles.primaryOptionButtonText}>Online payment</Text>
+                    <Icon name="credit-card" size={16} color={colors.primary} />
+                    <Text style={styles.secondaryOptionButtonText}>Online payment</Text>
                   </>
                 )}
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={styles.secondaryOptionButton}
-                onPress={handleSelectOfflineDonation}
-                activeOpacity={0.9}>
-                <Icon name="bank" size={16} color={colors.primary} />
-                <Text style={styles.secondaryOptionButtonText}>Offline (bank / UPI)</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -2337,9 +2524,22 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                 (manager) => {
                   const managerWithMapping = manager as DonationManagerWithMapping;
                   const details = mappingDetails[managerWithMapping.id] || {};
+                  const vpaId = details.VPA_id || (managerWithMapping as DonationManagerWithMapping & { VPA_id?: string }).VPA_id;
+                  const showPayNow = details.paymentMethod === 'UPI' && !!vpaId;
                   return (
                     <View key={managerWithMapping.id} style={styles.offlineManagerCard}>
-                      <Text style={styles.managerName}>{managerWithMapping.name}</Text>
+                      <View style={styles.managerNameRow}>
+                        <Text style={styles.managerName} numberOfLines={1}>{managerWithMapping.name}</Text>
+                        {showPayNow && (
+                          <TouchableOpacity
+                            style={styles.payNowButton}
+                            onPress={() => handlePayNowClick(managerWithMapping)}
+                            activeOpacity={0.9}>
+                            <Icon name="credit-card" size={12} color="#fff" />
+                            <Text style={styles.payNowButtonText}>Pay Now</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
                       {managerWithMapping.phone ? (
                         <View style={styles.phoneRow}>
                           <Text style={styles.managerPhone}>{managerWithMapping.phone}</Text>
@@ -2414,6 +2614,88 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         </View>
       </Modal>
 
+      {/* UPI Pay Now - amount input modal (open_donation) */}
+      <Modal
+        visible={upiPayAmountModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setUpiPayAmountModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Enter amount</Text>
+              <TouchableOpacity onPress={() => setUpiPayAmountModalVisible(false)}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.metaText}>Enter the donation amount to pay via UPI</Text>
+            <TextInput
+              style={styles.input}
+              placeholder="Amount (₹)"
+              placeholderTextColor={colors.textMuted}
+              keyboardType="decimal-pad"
+              value={upiPayAmount}
+              onChangeText={setUpiPayAmount}
+            />
+            <View style={styles.modalFooterRow}>
+              <TouchableOpacity
+                style={styles.cancelButton}
+                onPress={() => setUpiPayAmountModalVisible(false)}
+                activeOpacity={0.9}>
+                <Text style={styles.cancelButtonText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={handleUpiPayAmountConfirm}
+                activeOpacity={0.9}>
+                <Text style={styles.primaryButtonText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* UPI Pay Now - info modal before opening UPI */}
+      <Modal
+        visible={upiPayInfoModalVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          setUpiPayInfoModalVisible(false);
+          setUpiPayManager(null);
+        }}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Pay via UPI</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setUpiPayInfoModalVisible(false);
+                  setUpiPayManager(null);
+                }}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.metaText}>
+              Payment முடிந்தவுடன், வெற்றிகரமான பணம் செலுத்தியதற்கான (successful payment) ஸ்கிரீன்‌ஷாட் எடுத்து, நீங்கள் யாருக்காக பணம் செலுத்தியீர்களோ அந்த donation manager-க்கு அனுப்பவும்.
+            </Text>
+            {upiPayAmount && !isNaN(parseFloat(upiPayAmount.replace(/[^\d.]/g, ''))) ? (
+              <Text style={[styles.managerName, { marginTop: 12 }]}>
+                Amount: ₹{parseFloat(upiPayAmount.replace(/[^\d.]/g, '')).toFixed(2)}
+              </Text>
+            ) : null}
+            <View style={[styles.modalFooterRow, { marginTop: 16 }]}>
+              <TouchableOpacity
+                style={styles.primaryButton}
+                onPress={handleUpiPayInfoOk}
+                activeOpacity={0.9}>
+                <Text style={styles.primaryButtonText}>OK</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* Payment image / instructions modal */}
       <Modal
         visible={paymentDetailsModalVisible}
@@ -2462,21 +2744,28 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                         mappingDetails[selectedPaymentManager.id] ||
                         ({
                           paymentImage: selectedPaymentManager.paymentImage || undefined,
+                          VPA_id: selectedPaymentManager.VPA_id || undefined,
                         } as any);
+                      const vpaId = details.VPA_id || (selectedPaymentManager as DonationManagerWithMapping & { VPA_id?: string }).VPA_id;
                       const imageSource = details.paymentImage
                         ? { uri: details.paymentImage.startsWith('http') || details.paymentImage.startsWith('data:')
                           ? details.paymentImage
                           : `data:image/jpeg;base64,${details.paymentImage}` }
                         : null;
-                      if (!imageSource) {
-                        return (
-                          <Text style={styles.metaText}>
-                            Payment image is not available. Please contact the manager directly for
-                            payment details.
-                          </Text>
-                        );
-                      }
                       return (
+                        <View>
+                          {vpaId && (
+                            <View style={{ marginBottom: 12 }}>
+                              <Text style={styles.metaText}>UPI ID / VPA</Text>
+                              <Text style={[styles.managerName, { marginTop: 4 }]}>{vpaId}</Text>
+                            </View>
+                          )}
+                          {!imageSource ? (
+                            <Text style={styles.metaText}>
+                              Payment image is not available. Please contact the manager directly for
+                              payment details.
+                            </Text>
+                          ) : (
                         <TouchableOpacity
                           activeOpacity={0.9}
                           onPress={() => {
@@ -2493,6 +2782,8 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
                             resizeMode="contain"
                           />
                         </TouchableOpacity>
+                          )}
+                        </View>
                       );
                     })()}
                   </ScrollView>
@@ -4137,197 +4428,341 @@ export const SubcategoryDetailScreen = ({ route, navigation }: Props) => {
         </View>
       </Modal>
 
-      {/* Map donation managers modal */}
+      {/* Map donation managers modal - two tabs: Map Managers, Manage */}
       <Modal
         visible={mappingModalVisible}
         transparent
         animationType="slide"
         onRequestClose={() => {
           setMappingModalVisible(false);
-          // Reset state on close
-          setSelectedManagers(new Set());
-          setCurrentMappings(new Set());
           setDonationManagers([]);
         }}>
         <View style={styles.modalOverlay}>
           <View style={styles.modalContainer}>
             <View style={styles.modalHeaderRow}>
-              <Text style={styles.modalTitle}>Map donation managers</Text>
+              <Text style={styles.modalTitle}>Donation managers</Text>
               <TouchableOpacity
                 onPress={() => {
                   setMappingModalVisible(false);
-                  // Reset state on close
-                  setSelectedManagers(new Set());
-                  setCurrentMappings(new Set());
                   setDonationManagers([]);
                 }}>
                 <Icon name="close" size={18} color={colors.text} />
               </TouchableOpacity>
             </View>
+
+            {/* Tab row */}
+            <View style={styles.mappingTabRow}>
+              <TouchableOpacity
+                style={[styles.mappingTab, mappingModalTab === 'map' && styles.mappingTabActive]}
+                onPress={() => setMappingModalTab('map')}
+                activeOpacity={0.8}>
+                <Icon name="user-plus" size={16} color={mappingModalTab === 'map' ? colors.primary : colors.textMuted} />
+                <Text style={[styles.mappingTabText, mappingModalTab === 'map' && styles.mappingTabTextActive]}>
+                  Map Managers
+                </Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.mappingTab, mappingModalTab === 'manage' && styles.mappingTabActive]}
+                onPress={() => setMappingModalTab('manage')}
+                activeOpacity={0.8}>
+                <Icon name="cog" size={16} color={mappingModalTab === 'manage' ? colors.primary : colors.textMuted} />
+                <Text style={[styles.mappingTabText, mappingModalTab === 'manage' && styles.mappingTabTextActive]}>
+                  Manage
+                </Text>
+              </TouchableOpacity>
+            </View>
+
             {mappingLoading ? (
               <View style={styles.mappingLoader}>
                 <ActivityIndicator size="large" color={colors.primary} />
                 <Text style={styles.loaderText}>Loading managers...</Text>
               </View>
-            ) : (
+            ) : mappingModalTab === 'map' ? (
+              /* Map Managers tab: list of available managers (not yet mapped) */
               <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
-                {donationManagers.length === 0 ? (
+                {(() => {
+                  const mappedIds = new Set(subcategoryManagers.map((m) => m.id));
+                  const availableManagers = donationManagers.filter((m) => !mappedIds.has(m.id));
+                  if (availableManagers.length === 0) {
+                    return (
+                      <View style={styles.emptyList}>
+                        <Icon name="users" size={24} color={colors.textMuted} />
+                        <Text style={styles.emptyListText}>
+                          {donationManagers.length === 0
+                            ? 'No donation managers found'
+                            : 'All managers are already mapped'}
+                        </Text>
+                      </View>
+                    );
+                  }
+                  return availableManagers.map((manager) => (
+                    <TouchableOpacity
+                      key={manager.id}
+                      style={styles.managerItem}
+                      onPress={() => handleOpenMapManagerInput(manager)}
+                      activeOpacity={0.8}>
+                      <View style={styles.managerItemHeader}>
+                        <View style={styles.managerItemLeft}>
+                          <View style={styles.managerInfo}>
+                            <Text style={styles.managerName}>{manager.name}</Text>
+                            <Text style={styles.managerPhone}>{manager.phone}</Text>
+                          </View>
+                        </View>
+                        <Icon name="chevron-right" size={14} color={colors.textMuted} />
+                      </View>
+                    </TouchableOpacity>
+                  ));
+                })()}
+              </ScrollView>
+            ) : (
+              /* Manage tab: list of mapped managers with edit/delete icons */
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                {subcategoryManagers.length === 0 ? (
                   <View style={styles.emptyList}>
                     <Icon name="users" size={24} color={colors.textMuted} />
-                    <Text style={styles.emptyListText}>No donation managers found</Text>
+                    <Text style={styles.emptyListText}>No mapped managers</Text>
                   </View>
                 ) : (
-                  donationManagers.map((manager) => {
-                    const isSelected = selectedManagers.has(manager.id);
-                    const details = mappingDetails[manager.id] || {};
-                    return (
-                      <TouchableOpacity
-                        key={manager.id}
-                        style={styles.managerItem}
-                        onPress={() => handleToggleManagerSelection(manager.id)}
-                        activeOpacity={0.8}>
-                        <View style={styles.managerItemHeader}>
-                          <View style={styles.managerItemLeft}>
-                            <View
-                              style={[
-                                styles.checkbox,
-                                isSelected && styles.checkboxChecked,
-                              ]}>
-                              {isSelected && <Icon name="check" size={12} color="#fff" />}
-                            </View>
-                            <View style={styles.managerInfo}>
-                              <Text style={styles.managerName}>{manager.name}</Text>
-                              <Text style={styles.managerPhone}>{manager.phone}</Text>
-                            </View>
+                  subcategoryManagers.map((manager) => (
+                    <View key={manager.id} style={styles.managerItem}>
+                      <View style={styles.managerItemHeader}>
+                        <View style={styles.managerItemLeft}>
+                          <View style={styles.managerInfo}>
+                            <Text style={styles.managerName}>{manager.name}</Text>
+                            <Text style={styles.managerPhone}>{manager.phone}</Text>
                           </View>
-                          {manager.status === 'ACTIVE' ? (
-                            <View style={styles.statusBadgeActive}>
-                              <Text style={styles.statusBadgeTextSmall}>ACTIVE</Text>
-                            </View>
-                          ) : (
-                            <View style={styles.statusBadgeInactive}>
-                              <Text style={styles.statusBadgeTextSmall}>
-                                {manager.status}
-                              </Text>
-                            </View>
-                          )}
                         </View>
-                        {isSelected && (
-                          <View style={styles.mappingDetailsContainer}>
-                            <Text style={styles.metaText}>Payment method</Text>
-                            <View style={styles.paymentMethodRow}>
-                              <TouchableOpacity
-                                style={[
-                                  styles.chipButton,
-                                  details.paymentMethod === 'UPI' && styles.chipButtonActive,
-                                ]}
-                                onPress={() =>
-                                  handleSelectPaymentMethodForManager(manager.id, 'UPI')
-                                }
-                                activeOpacity={0.8}>
-                                <Text
-                                  style={[
-                                    styles.chipButtonText,
-                                    details.paymentMethod === 'UPI' &&
-                                      styles.chipButtonTextActive,
-                                  ]}>
-                                  UPI
-                                </Text>
-                              </TouchableOpacity>
-                              <TouchableOpacity
-                                style={[
-                                  styles.chipButton,
-                                  details.paymentMethod === 'BANK_ACCOUNT' &&
-                                    styles.chipButtonActive,
-                                ]}
-                                onPress={() =>
-                                  handleSelectPaymentMethodForManager(
-                                    manager.id,
-                                    'BANK_ACCOUNT',
-                                  )
-                                }
-                                activeOpacity={0.8}>
-                                <Text
-                                  style={[
-                                    styles.chipButtonText,
-                                    details.paymentMethod === 'BANK_ACCOUNT' &&
-                                      styles.chipButtonTextActive,
-                                  ]}>
-                                  Bank account
-                                </Text>
-                              </TouchableOpacity>
-                            </View>
-                            {details.paymentMethod === 'UPI' && (
-                              <View style={styles.useNumberForUPIRow}>
-                                <View style={{ flex: 1 }}>
-                                  <Text style={styles.metaText}>Use phone number for UPI</Text>
-                                  <Text style={styles.helperText}>
-                                    When enabled, donors can pay using this manager's phone number
-                                    in their UPI app.
-                                  </Text>
-                                </View>
-                                <Switch
-                                  value={!!details.isUseNumberForUPI}
-                                  onValueChange={(value) =>
-                                    handleToggleUseNumberForUPI(manager.id, value)
-                                  }
-                                />
-                              </View>
-                            )}
-                            <Text style={[styles.metaText, { marginTop: 8 }]}>
-                              Account holder name (optional)
-                            </Text>
-                            <TextInput
-                              style={styles.input}
-                              placeholder="Enter account holder name"
-                              placeholderTextColor={colors.textMuted}
-                              value={details.accountHolderName || ''}
-                              onChangeText={(text) =>
-                                handleChangeAccountHolderName(manager.id, text)
-                              }
-                            />
-                            <Text style={[styles.metaText, { marginTop: 8 }]}>
-                              Payment image (UPI QR / bank details)
-                            </Text>
-                            <View style={styles.paymentImageRow}>
-                              <TouchableOpacity
-                                style={styles.outlineButton}
-                                onPress={() => handleSelectPaymentImage(manager.id)}
-                                activeOpacity={0.9}>
-                                <Icon name="image" size={14} color={colors.primary} />
-                                <Text style={styles.outlineButtonText}>Select image</Text>
-                              </TouchableOpacity>
-                              {details.paymentImagePreviewUri ? (
-                                <Image
-                                  source={{ uri: details.paymentImagePreviewUri }}
-                                  style={styles.paymentImagePreview}
-                                  resizeMode="cover"
-                                />
-                              ) : null}
-                            </View>
-                          </View>
-                        )}
-                      </TouchableOpacity>
-                    );
-                  })
+                        <View style={styles.managerActions}>
+                          <TouchableOpacity
+                            style={styles.managerActionButton}
+                            onPress={() => handleOpenEditMapping(manager)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                            <Icon name="edit" size={18} color={colors.primary} />
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={styles.managerActionButton}
+                            onPress={() => handleDeleteMapping(manager)}
+                            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}>
+                            <Icon name="trash" size={18} color={colors.danger} />
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    </View>
+                  ))
                 )}
               </ScrollView>
             )}
-            <TouchableOpacity
-              style={[styles.submitButton, mappingSubmitting && styles.submitButtonDisabled]}
-              onPress={handleSaveMappings}
-              activeOpacity={0.9}
-              disabled={mappingSubmitting || mappingLoading}>
-              {mappingSubmitting ? (
-                <ActivityIndicator size="small" color="#fff" />
-              ) : (
-                <>
-                  <Icon name="save" size={14} color="#fff" />
-                  <Text style={styles.submitButtonText}>Save mappings</Text>
-                </>
-              )}
-            </TouchableOpacity>
           </View>
+        </View>
+      </Modal>
+
+      {/* Map Manager input modal - form for individual manager */}
+      <Modal
+        visible={mapManagerInputModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setMapManagerInputModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>
+                Map: {selectedManagerForMap?.name}
+              </Text>
+              <TouchableOpacity onPress={() => setMapManagerInputModalVisible(false)}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            {selectedManagerForMap && (
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                <View style={styles.mappingDetailsContainer}>
+                  {(() => {
+                    const details = mappingDetails[selectedManagerForMap.id] || {};
+                    return (
+                      <>
+                        <Text style={styles.metaText}>Payment method</Text>
+                        <View style={styles.paymentMethodRow}>
+                          <TouchableOpacity
+                            style={[styles.chipButton, details.paymentMethod === 'UPI' && styles.chipButtonActive]}
+                            onPress={() => handleSelectPaymentMethodForManager(selectedManagerForMap.id, 'UPI')}
+                            activeOpacity={0.8}>
+                            <Text style={[styles.chipButtonText, details.paymentMethod === 'UPI' && styles.chipButtonTextActive]}>UPI</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.chipButton, details.paymentMethod === 'BANK_ACCOUNT' && styles.chipButtonActive]}
+                            onPress={() => handleSelectPaymentMethodForManager(selectedManagerForMap.id, 'BANK_ACCOUNT')}
+                            activeOpacity={0.8}>
+                            <Text style={[styles.chipButtonText, details.paymentMethod === 'BANK_ACCOUNT' && styles.chipButtonTextActive]}>Bank account</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {details.paymentMethod === 'UPI' && (
+                          <>
+                            <View style={styles.useNumberForUPIRow}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.metaText}>Use phone number for UPI</Text>
+                                <Text style={styles.helperText}>When enabled, donors can pay using this manager's phone number in their UPI app.</Text>
+                              </View>
+                              <Switch
+                                value={!!details.isUseNumberForUPI}
+                                onValueChange={(v) => handleToggleUseNumberForUPI(selectedManagerForMap.id, v)}
+                              />
+                            </View>
+                            <Text style={[styles.metaText, { marginTop: 8 }]}>UPI ID / VPA (optional)</Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="e.g. name@upi"
+                              placeholderTextColor={colors.textMuted}
+                              value={details.VPA_id || ''}
+                              onChangeText={(t) => handleChangeVPAId(selectedManagerForMap.id, t)}
+                              autoCapitalize="none"
+                            />
+                          </>
+                        )}
+                        <Text style={[styles.metaText, { marginTop: 8 }]}>Account holder name (optional)</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Enter account holder name"
+                          placeholderTextColor={colors.textMuted}
+                          value={details.accountHolderName || ''}
+                          onChangeText={(t) => handleChangeAccountHolderName(selectedManagerForMap.id, t)}
+                        />
+                        <Text style={[styles.metaText, { marginTop: 8 }]}>Payment image (UPI QR / bank details)</Text>
+                        <View style={styles.paymentImageRow}>
+                          <TouchableOpacity
+                            style={styles.outlineButton}
+                            onPress={() => handleSelectPaymentImage(selectedManagerForMap.id)}
+                            activeOpacity={0.9}>
+                            <Icon name="image" size={14} color={colors.primary} />
+                            <Text style={styles.outlineButtonText}>Select image</Text>
+                          </TouchableOpacity>
+                          {details.paymentImagePreviewUri ? (
+                            <Image source={{ uri: details.paymentImagePreviewUri }} style={styles.paymentImagePreview} resizeMode="cover" />
+                          ) : null}
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.submitButton, mapManagerSubmitting && styles.submitButtonDisabled]}
+                          onPress={handlePostMapManager}
+                          activeOpacity={0.9}
+                          disabled={mapManagerSubmitting}>
+                          {mapManagerSubmitting ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <>
+                              <Icon name="check" size={14} color="#fff" />
+                              <Text style={styles.submitButtonText}>Map Manager</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </>
+                    );
+                  })()}
+                </View>
+              </ScrollView>
+            )}
+          </KeyboardAvoidingView>
+        </View>
+      </Modal>
+
+      {/* Edit mapping modal */}
+      <Modal
+        visible={editMappingModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setEditMappingModalVisible(false)}>
+        <View style={styles.modalOverlay}>
+          <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.modalContainer}>
+            <View style={styles.modalHeaderRow}>
+              <Text style={styles.modalTitle}>Edit: {selectedManagerForEdit?.name}</Text>
+              <TouchableOpacity onPress={() => setEditMappingModalVisible(false)}>
+                <Icon name="close" size={18} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+            {selectedManagerForEdit && (
+              <ScrollView style={styles.modalScroll} showsVerticalScrollIndicator={false}>
+                <View style={styles.mappingDetailsContainer}>
+                  {(() => {
+                    const details = mappingDetails[selectedManagerForEdit.id] || {};
+                    return (
+                      <>
+                        <Text style={styles.metaText}>Payment method</Text>
+                        <View style={styles.paymentMethodRow}>
+                          <TouchableOpacity
+                            style={[styles.chipButton, details.paymentMethod === 'UPI' && styles.chipButtonActive]}
+                            onPress={() => handleSelectPaymentMethodForManager(selectedManagerForEdit.id, 'UPI')}
+                            activeOpacity={0.8}>
+                            <Text style={[styles.chipButtonText, details.paymentMethod === 'UPI' && styles.chipButtonTextActive]}>UPI</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity
+                            style={[styles.chipButton, details.paymentMethod === 'BANK_ACCOUNT' && styles.chipButtonActive]}
+                            onPress={() => handleSelectPaymentMethodForManager(selectedManagerForEdit.id, 'BANK_ACCOUNT')}
+                            activeOpacity={0.8}>
+                            <Text style={[styles.chipButtonText, details.paymentMethod === 'BANK_ACCOUNT' && styles.chipButtonTextActive]}>Bank account</Text>
+                          </TouchableOpacity>
+                        </View>
+                        {details.paymentMethod === 'UPI' && (
+                          <>
+                            <View style={styles.useNumberForUPIRow}>
+                              <View style={{ flex: 1 }}>
+                                <Text style={styles.metaText}>Use phone number for UPI</Text>
+                                <Text style={styles.helperText}>When enabled, donors can pay using this manager's phone number in their UPI app.</Text>
+                              </View>
+                              <Switch
+                                value={!!details.isUseNumberForUPI}
+                                onValueChange={(v) => handleToggleUseNumberForUPI(selectedManagerForEdit.id, v)}
+                              />
+                            </View>
+                            <Text style={[styles.metaText, { marginTop: 8 }]}>UPI ID / VPA (optional)</Text>
+                            <TextInput
+                              style={styles.input}
+                              placeholder="e.g. name@upi"
+                              placeholderTextColor={colors.textMuted}
+                              value={details.VPA_id || ''}
+                              onChangeText={(t) => handleChangeVPAId(selectedManagerForEdit.id, t)}
+                              autoCapitalize="none"
+                            />
+                          </>
+                        )}
+                        <Text style={[styles.metaText, { marginTop: 8 }]}>Account holder name (optional)</Text>
+                        <TextInput
+                          style={styles.input}
+                          placeholder="Enter account holder name"
+                          placeholderTextColor={colors.textMuted}
+                          value={details.accountHolderName || ''}
+                          onChangeText={(t) => handleChangeAccountHolderName(selectedManagerForEdit.id, t)}
+                        />
+                        <Text style={[styles.metaText, { marginTop: 8 }]}>Payment image (UPI QR / bank details)</Text>
+                        <View style={styles.paymentImageRow}>
+                          <TouchableOpacity
+                            style={styles.outlineButton}
+                            onPress={() => handleSelectPaymentImage(selectedManagerForEdit.id)}
+                            activeOpacity={0.9}>
+                            <Icon name="image" size={14} color={colors.primary} />
+                            <Text style={styles.outlineButtonText}>Select image</Text>
+                          </TouchableOpacity>
+                          {details.paymentImagePreviewUri ? (
+                            <Image source={{ uri: details.paymentImagePreviewUri }} style={styles.paymentImagePreview} resizeMode="cover" />
+                          ) : null}
+                        </View>
+                        <TouchableOpacity
+                          style={[styles.submitButton, editMappingSubmitting && styles.submitButtonDisabled]}
+                          onPress={handleUpdateMapping}
+                          activeOpacity={0.9}
+                          disabled={editMappingSubmitting}>
+                          {editMappingSubmitting ? (
+                            <ActivityIndicator size="small" color="#fff" />
+                          ) : (
+                            <>
+                              <Icon name="save" size={14} color="#fff" />
+                              <Text style={styles.submitButtonText}>Update</Text>
+                            </>
+                          )}
+                        </TouchableOpacity>
+                      </>
+                    );
+                  })()}
+                </View>
+              </ScrollView>
+            )}
+          </KeyboardAvoidingView>
         </View>
       </Modal>
 
@@ -4788,6 +5223,58 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 12,
   },
+  modalFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    alignItems: 'center',
+    gap: 10,
+    marginTop: 12,
+  },
+  primaryButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    backgroundColor: colors.primary,
+  },
+  primaryButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: '#fff',
+  },
+  cancelButton: {
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: colors.border,
+    backgroundColor: colors.card,
+  },
+  cancelButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 14,
+    color: colors.text,
+  },
+  managerNameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  payNowButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 8,
+    backgroundColor: '#16a34a',
+    flexShrink: 0,
+  },
+  payNowButtonText: {
+    fontFamily: fonts.heading,
+    fontSize: 11,
+    color: '#fff',
+  },
   modalTitle: {
     fontFamily: fonts.heading,
     fontSize: 18,
@@ -5107,6 +5594,39 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     gap: 12,
   },
+  mappingTabRow: {
+    flexDirection: 'row',
+    marginBottom: 16,
+    backgroundColor: colors.cardMuted,
+    borderRadius: 12,
+    padding: 4,
+  },
+  mappingTab: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 10,
+    borderRadius: 10,
+  },
+  mappingTabActive: {
+    backgroundColor: colors.card,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  mappingTabText: {
+    fontFamily: fonts.body,
+    fontSize: 14,
+    color: colors.textMuted,
+    fontWeight: '600',
+  },
+  mappingTabTextActive: {
+    color: colors.primary,
+  },
   managerItem: {
     marginBottom: 10,
     padding: 12,
@@ -5165,6 +5685,16 @@ const styles = StyleSheet.create({
     color: colors.textMuted,
     marginTop: 2,
     flex: 1,
+  },
+  managerActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  managerActionButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: colors.cardMuted,
   },
   phoneRow: {
     flexDirection: 'row',

@@ -25,7 +25,10 @@ import Toast from 'react-native-toast-message';
 import SoundPlayer from 'react-native-sound-player';
 import Slider from '@react-native-community/slider';
 import { pick, types, errorCodes, isErrorWithCode } from '@react-native-documents/picker';
+import { useRoute, useNavigation } from '@react-navigation/native';
+import type { RouteProp } from '@react-navigation/native';
 import { useAuth } from '../context/AuthContext';
+import { BottomTabParamList } from '../navigation/BottomTabNavigator';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { AudioService, type Audio, type MusicCategory } from '../services/audio';
@@ -49,6 +52,8 @@ const formatDate = (dateString: string): string => {
 };
 
 export const MusicScreen = () => {
+  const route = useRoute<RouteProp<BottomTabParamList, 'Music'>>();
+  const navigation = useNavigation();
   const { currentUser } = useAuth();
   const [audios, setAudios] = useState<Audio[]>([]);
   const [loading, setLoading] = useState(true);
@@ -65,6 +70,8 @@ export const MusicScreen = () => {
   const [seekValue, setSeekValue] = useState(0);
   const audioProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isFetchingRef = useRef(false);
+  const hasHandledInitialUrlRef = useRef(false);
+  const hasSetInitialCategoryRef = useRef(false);
 
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -90,6 +97,9 @@ export const MusicScreen = () => {
   const [showEditCategoryDropdown, setShowEditCategoryDropdown] = useState(false);
   const [showCategoryManageModal, setShowCategoryManageModal] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState('');
+  const [selectedAudioForSheet, setSelectedAudioForSheet] = useState<Audio | null>(null);
+  const [showAudioSheet, setShowAudioSheet] = useState(false);
+  const [loadingAudioIdForSheet, setLoadingAudioIdForSheet] = useState<string | null>(null);
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const categoriesScrollRef = useRef<ScrollView>(null);
@@ -382,9 +392,10 @@ export const MusicScreen = () => {
     }
   }, []);
 
-  // Set "My Kuttam" as default category when categories are loaded
+  // Set "My Kuttam" as default category only on initial page load when categories first load
   useEffect(() => {
-    if (categories.length > 0 && selectedCategoryId === null) {
+    if (categories.length > 0 && !hasSetInitialCategoryRef.current) {
+      hasSetInitialCategoryRef.current = true;
       const myKuttamCategory = categories.find(
         (cat) => cat.name.toLowerCase() === 'my kuttam'
       );
@@ -392,7 +403,7 @@ export const MusicScreen = () => {
         setSelectedCategoryId(myKuttamCategory.id);
       }
     }
-  }, [categories, selectedCategoryId]);
+  }, [categories]);
 
   const handleCategorySelection = (categoryId: string | null) => {
     if (showUploadModal) {
@@ -559,20 +570,43 @@ export const MusicScreen = () => {
     }
   };
 
+  const handleCloseAudioSheet = () => {
+    if (selectedAudioForSheet && currentAudioId === selectedAudioForSheet.id) {
+      try {
+        SoundPlayer.stop();
+      } catch {
+        // ignore
+      }
+      stopAudioProgressInterval();
+      resetAudioProgress();
+      setIsAudioPlaying(false);
+      setCurrentAudioId(null);
+    }
+    setSelectedAudioForSheet(null);
+    setLoadingAudioIdForSheet(null);
+    setShowAudioSheet(false);
+  };
+
   const fetchAudioById = async (audioId: string) => {
+    setLoadingAudioIdForSheet(audioId);
+    setShowAudioSheet(true);
     try {
       const response = await AudioService.getAudioById(audioId);
       if (response.success && response.data) {
+        const audioData = response.data;
+        setLoadingAudioIdForSheet(null);
         // Add to list if not already there
         setAudios((prev) => {
           if (prev.find((a) => a.id === audioId)) {
             return prev;
           }
-          return [response.data!, ...prev];
+          return [audioData, ...prev];
         });
-        // Play the audio
-        handleAudioToggle(response.data);
+        setSelectedAudioForSheet(audioData);
+        handleAudioToggle(audioData);
       } else {
+        setLoadingAudioIdForSheet(null);
+        setShowAudioSheet(false);
         Toast.show({
           type: 'error',
           text1: 'Audio not found',
@@ -580,28 +614,52 @@ export const MusicScreen = () => {
         });
       }
     } catch (error) {
+      setLoadingAudioIdForSheet(null);
+      setShowAudioSheet(false);
       Toast.show({
         type: 'error',
         text1: 'Error',
-        text2: 'Failed to load audio.',
+        text2: error instanceof Error ? error.message : 'Failed to load audio.',
+        visibilityTime: 4000,
       });
     }
   };
 
-  // Deep link handling - open audio when deep link is clicked
+  // Handle route params (from AppNavigator deep link -> MainTabs -> Music with params: { audioId })
+  useEffect(() => {
+    const audioId = route.params?.audioId;
+    if (!audioId) return;
+    const cleanId = audioId.split('?')[0].split('#')[0].trim();
+    if (!cleanId) return;
+    // Clear param so we don't re-trigger on tab focus
+    (navigation as any).setParams({ audioId: undefined });
+    const audio = audios.find((a) => a.id === cleanId);
+    if (audio) {
+      setSelectedAudioForSheet(audio);
+      setShowAudioSheet(true);
+      handleAudioToggle(audio);
+    } else {
+      fetchAudioById(cleanId);
+    }
+  }, [route.params?.audioId]);
+
+  // Deep link handling - open audio when deep link is clicked (foreground/background, or Linking.getInitialURL)
   useEffect(() => {
     const handleDeepLink = (event: { url: string }) => {
       const url = event.url;
       console.log('Deep link received in MusicScreen:', url);
       
-      // Parse deep link: mykuttam://audio/:id
+      // Parse deep link: mykuttam://audio/:id (strip query/hash so ID is clean)
       const deepLinkMatch = url.match(/mykuttam:\/\/audio\/(.+)/);
       if (deepLinkMatch && deepLinkMatch[1]) {
-        const audioId = deepLinkMatch[1];
+        const audioId = deepLinkMatch[1].split('?')[0].split('#')[0].trim();
+        if (!audioId) return;
         // Find the audio in current list
         const audio = audios.find((a) => a.id === audioId);
         if (audio) {
-          // Play the audio
+          // Show bottom sheet and play (like News page)
+          setSelectedAudioForSheet(audio);
+          setShowAudioSheet(true);
           handleAudioToggle(audio);
         } else {
           // If audio not loaded yet, fetch it
@@ -610,14 +668,17 @@ export const MusicScreen = () => {
         return;
       }
 
-      // Parse web URL: https://domain.com/audio/:id
+      // Parse web URL: https://domain.com/audio/:id (strip query/hash so ID is clean)
       const webUrlMatch = url.match(/https?:\/\/[^\/]+\/audio\/(.+)/);
       if (webUrlMatch && webUrlMatch[1]) {
-        const audioId = webUrlMatch[1];
+        const audioId = webUrlMatch[1].split('?')[0].split('#')[0].trim();
+        if (!audioId) return;
         // Find the audio in current list
         const audio = audios.find((a) => a.id === audioId);
         if (audio) {
-          // Play the audio
+          // Show bottom sheet and play (like News page)
+          setSelectedAudioForSheet(audio);
+          setShowAudioSheet(true);
           handleAudioToggle(audio);
         } else {
           // If audio not loaded yet, fetch it
@@ -626,12 +687,15 @@ export const MusicScreen = () => {
       }
     };
 
-    // Handle deep link when app opens from closed state
-    Linking.getInitialURL().then((url) => {
-      if (url) {
-        handleDeepLink({ url });
-      }
-    });
+    // Handle deep link when app opens from closed state (only once)
+    if (!hasHandledInitialUrlRef.current) {
+      Linking.getInitialURL().then((url) => {
+        if (url) {
+          hasHandledInitialUrlRef.current = true;
+          handleDeepLink({ url });
+        }
+      });
+    }
 
     // Listen for deep links when app is open
     const subscription = Linking.addEventListener('url', handleDeepLink);
@@ -1629,6 +1693,151 @@ export const MusicScreen = () => {
           </View>
         </View>
       </Modal>
+
+      {/* Audio Detail Bottom Sheet (like News - shown when navigated via deep link) */}
+      <Modal
+        visible={showAudioSheet}
+        transparent
+        animationType="slide"
+        onRequestClose={handleCloseAudioSheet}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle} numberOfLines={2}>
+                {loadingAudioIdForSheet ? 'Loading audio...' : selectedAudioForSheet?.title}
+              </Text>
+              <TouchableOpacity onPress={handleCloseAudioSheet}>
+                <Icon name="times" size={24} color={colors.text} />
+              </TouchableOpacity>
+            </View>
+
+            {loadingAudioIdForSheet ? (
+              <View style={styles.audioSheetLoader}>
+                <ActivityIndicator size="large" color={colors.primary} />
+                <Text style={styles.audioSheetLoaderText}>Fetching audio...</Text>
+              </View>
+            ) : (
+            <ScrollView style={styles.modalBody}>
+              {selectedAudioForSheet?.description ? (
+                <View style={styles.audioSheetDescription}>
+                  <Text style={styles.audioSheetDescriptionText}>
+                    {selectedAudioForSheet.description}
+                  </Text>
+                </View>
+              ) : null}
+
+              {selectedAudioForSheet && (
+                <View style={styles.audioSheetControls}>
+                  <View style={styles.audioControlsRow}>
+                    <TouchableOpacity
+                      style={styles.audioSeekButton}
+                      onPress={handleAudioBackward}
+                      disabled={audioLoading || audioDuration === 0}>
+                      <Icon name="backward" size={14} color={audioDuration === 0 ? colors.textMuted : colors.text} />
+                      <Text style={[styles.audioSeekText, audioDuration === 0 && styles.audioSeekTextDisabled]}>10s</Text>
+                    </TouchableOpacity>
+
+                    <View style={styles.sliderContainer}>
+                      <Slider
+                        style={styles.slider}
+                        value={
+                          currentAudioId === selectedAudioForSheet.id
+                            ? (isSeeking ? seekValue : audioPosition)
+                            : 0
+                        }
+                        minimumValue={0}
+                        maximumValue={
+                          currentAudioId === selectedAudioForSheet.id ? audioDuration || 1 : 1
+                        }
+                        minimumTrackTintColor={colors.primary}
+                        maximumTrackTintColor={colors.border}
+                        thumbTintColor={colors.primary}
+                        onSlidingStart={() => setIsSeeking(true)}
+                        onValueChange={(value) => setSeekValue(value)}
+                        onSlidingComplete={(value) => {
+                          setIsSeeking(false);
+                          handleSeekToPosition(value);
+                        }}
+                        disabled={
+                          audioLoading ||
+                          audioDuration === 0 ||
+                          currentAudioId !== selectedAudioForSheet.id
+                        }
+                      />
+                      <View style={styles.audioTimeContainer}>
+                        <Text style={styles.audioTime}>
+                          {currentAudioId === selectedAudioForSheet.id
+                            ? formatTime(isSeeking ? seekValue : audioPosition)
+                            : '0:00'}
+                        </Text>
+                        <Text style={styles.audioTime}>
+                          {currentAudioId === selectedAudioForSheet.id
+                            ? formatTime(audioDuration)
+                            : '0:00'}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <TouchableOpacity
+                      style={styles.audioSeekButton}
+                      onPress={handleAudioForward}
+                      disabled={audioLoading || audioDuration === 0}>
+                      <Icon name="forward" size={14} color={audioDuration === 0 ? colors.textMuted : colors.text} />
+                      <Text style={[styles.audioSeekText, audioDuration === 0 && styles.audioSeekTextDisabled]}>10s</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={[
+                      styles.playButton,
+                      currentAudioId === selectedAudioForSheet.id && isAudioPlaying && styles.playButtonActive,
+                    ]}
+                    onPress={() => handleAudioToggle(selectedAudioForSheet)}
+                    disabled={audioLoading && currentAudioId === selectedAudioForSheet.id}>
+                    {audioLoading && currentAudioId === selectedAudioForSheet.id ? (
+                      <ActivityIndicator size="small" color={colors.primary} />
+                    ) : (
+                      <Icon
+                        name={
+                          currentAudioId === selectedAudioForSheet.id && isAudioPlaying ? 'pause' : 'play'
+                        }
+                        size={20}
+                        color={
+                          currentAudioId === selectedAudioForSheet.id && isAudioPlaying ? '#fff' : colors.primary
+                        }
+                      />
+                    )}
+                    <Text
+                      style={[
+                        styles.playButtonText,
+                        currentAudioId === selectedAudioForSheet.id && isAudioPlaying && styles.playButtonTextActive,
+                      ]}>
+                      {currentAudioId === selectedAudioForSheet.id && isAudioPlaying ? 'Pause' : 'Play'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {selectedAudioForSheet && (
+                <TouchableOpacity
+                  style={styles.audioSheetShareButton}
+                  onPress={() => handleShareAudio(selectedAudioForSheet)}
+                  activeOpacity={0.7}>
+                  <Icon name="share" size={18} color={colors.primary} />
+                  <Text style={styles.audioSheetShareText}>Share</Text>
+                </TouchableOpacity>
+              )}
+
+              {selectedAudioForSheet && (
+                <Text style={styles.audioSheetDate}>
+                  {formatDate(selectedAudioForSheet.uploaded_date)}
+                </Text>
+              )}
+            </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
     </SafeAreaView>
   );
 };
@@ -2245,6 +2454,49 @@ const styles = StyleSheet.create({
     padding: 8,
     justifyContent: 'center',
     alignItems: 'center',
+  },
+  audioSheetLoader: {
+    paddingVertical: 48,
+    paddingHorizontal: 24,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  audioSheetLoaderText: {
+    marginTop: 16,
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.textMuted,
+  },
+  audioSheetDescription: {
+    marginBottom: 20,
+  },
+  audioSheetDescriptionText: {
+    fontFamily: fonts.body,
+    fontSize: 15,
+    color: colors.text,
+    lineHeight: 22,
+  },
+  audioSheetControls: {
+    marginBottom: 20,
+  },
+  audioSheetShareButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    marginBottom: 12,
+  },
+  audioSheetShareText: {
+    fontFamily: fonts.body,
+    fontSize: 16,
+    color: colors.primary,
+    fontWeight: '600',
+  },
+  audioSheetDate: {
+    fontFamily: fonts.body,
+    fontSize: 12,
+    color: colors.textMuted,
   },
 });
 

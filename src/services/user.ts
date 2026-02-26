@@ -102,6 +102,27 @@ export const UserService = {
     return data;
   },
 
+  // Update user status (ACTIVE, BLOCK, etc.)
+  updateUserStatus: async (phone: string, status: AccountStatus): Promise<UpdateUserRoleResponse> => {
+    const headers = await getAuthHeaders();
+    const response = await fetch(endpoints.updateUserStatus(phone), {
+      method: 'PATCH',
+      headers,
+      body: JSON.stringify({ status }),
+    });
+
+    const text = await response.text();
+    const data: UpdateUserRoleResponse = text
+      ? JSON.parse(text)
+      : { success: false, message: 'Empty response', data: null };
+
+    if (!response.ok) {
+      throw new Error(data.message || 'Failed to update user status');
+    }
+
+    return data;
+  },
+
   // Get all users with pagination and filters
   getUsers: async (params: GetUsersParams = {}): Promise<GetUsersResponse> => {
     const headers = await getAuthHeaders();

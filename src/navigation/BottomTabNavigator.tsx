@@ -11,10 +11,10 @@ import { fonts } from '../theme/typography';
 import { View, StyleSheet } from 'react-native';
 
 export type BottomTabParamList = {
-  Home: undefined;
+  Home: { initialNewsId?: string } | undefined;
   Donation: undefined;
-  Gallery: undefined;
-  Music: undefined;
+  Gallery: { imageId?: string } | undefined;
+  Music: { audioId?: string } | undefined;
   Profile: undefined;
   More: undefined;
 };
