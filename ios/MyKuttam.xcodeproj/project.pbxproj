@@ -34,6 +34,8 @@
 		40E53C9B9B1F4EE4A7D763A6 /* Octicons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 1817908AC46B4F9C81A876C5 /* Octicons.ttf */; };
 		878BAF6C4667462C93BFCEFF /* SimpleLineIcons.ttf in Resources */ = {isa = PBXBuildFile; fileRef = 0571F4312F444B20AB98AD56 /* SimpleLineIcons.ttf */; };
 		2546005A7FD34B0689A946FB /* Zocial.ttf in Resources */ = {isa = PBXBuildFile; fileRef = BBDFFF42B3414210BDD77AD4 /* Zocial.ttf */; };
+		62AF605A439C4F84B9B0F9EA /* BootSplash.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 06BA9328E01F41E5AA0FBCC4 /* BootSplash.storyboard */; };
+		497DA5EE745141929500DF3F /* Colors.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = FB923B318A4747DCA653FA08 /* Colors.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -70,6 +72,8 @@
 		1817908AC46B4F9C81A876C5 /* Octicons.ttf */ = {isa = PBXFileReference; name = "Octicons.ttf"; path = "../node_modules/react-native-vector-icons/Fonts/Octicons.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 		0571F4312F444B20AB98AD56 /* SimpleLineIcons.ttf */ = {isa = PBXFileReference; name = "SimpleLineIcons.ttf"; path = "../node_modules/react-native-vector-icons/Fonts/SimpleLineIcons.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
 		BBDFFF42B3414210BDD77AD4 /* Zocial.ttf */ = {isa = PBXFileReference; name = "Zocial.ttf"; path = "../node_modules/react-native-vector-icons/Fonts/Zocial.ttf"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		06BA9328E01F41E5AA0FBCC4 /* BootSplash.storyboard */ = {isa = PBXFileReference; name = "BootSplash.storyboard"; path = "MyKuttam/BootSplash.storyboard"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = unknown; explicitFileType = undefined; includeInIndex = 0; };
+		FB923B318A4747DCA653FA08 /* Colors.xcassets */ = {isa = PBXFileReference; name = "Colors.xcassets"; path = "MyKuttam/Colors.xcassets"; sourceTree = "<group>"; fileEncoding = undefined; lastKnownFileType = folder.assetcatalog; explicitFileType = undefined; includeInIndex = 0; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -92,6 +96,8 @@
 				13B07FB61A68108700A75B9A /* Info.plist */,
 				81AB9BB72411601600AC10FF /* LaunchScreen.storyboard */,
 				13B07FB81A68108700A75B9A /* PrivacyInfo.xcprivacy */,
+				06BA9328E01F41E5AA0FBCC4 /* BootSplash.storyboard */,
+				FB923B318A4747DCA653FA08 /* Colors.xcassets */,
 			);
 			name = MyKuttam;
 			sourceTree = "<group>";
@@ -260,6 +266,8 @@
 				40E53C9B9B1F4EE4A7D763A6 /* Octicons.ttf in Resources */,
 				878BAF6C4667462C93BFCEFF /* SimpleLineIcons.ttf in Resources */,
 				2546005A7FD34B0689A946FB /* Zocial.ttf in Resources */,
+				62AF605A439C4F84B9B0F9EA /* BootSplash.storyboard in Resources */,
+				497DA5EE745141929500DF3F /* Colors.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
