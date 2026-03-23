@@ -73,6 +73,14 @@ export const MusicScreen = () => {
   const hasHandledInitialUrlRef = useRef(false);
   const hasInitializedCategoryFetchRef = useRef(false);
 
+  // Refs for auto-play next (avoid stale closures in FinishedPlaying)
+  const audiosRef = useRef<Audio[]>([]);
+  const pageRef = useRef(1);
+  const hasMoreRef = useRef(true);
+  const selectedCategoryIdRef = useRef<string | null>(null);
+  const currentAudioIdRef = useRef<string | null>(null);
+  const isHandlingPlayNextRef = useRef(false);
+
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
   const [uploadTitle, setUploadTitle] = useState('');
@@ -103,6 +111,14 @@ export const MusicScreen = () => {
   const [creatingCategory, setCreatingCategory] = useState(false);
   const [deletingCategoryId, setDeletingCategoryId] = useState<string | null>(null);
   const categoriesScrollRef = useRef<ScrollView>(null);
+
+  useEffect(() => {
+    audiosRef.current = audios;
+    pageRef.current = page;
+    hasMoreRef.current = hasMore;
+    selectedCategoryIdRef.current = selectedCategoryId;
+    currentAudioIdRef.current = currentAudioId;
+  }, [audios, page, hasMore, selectedCategoryId, currentAudioId]);
 
   // Animation refs for playing state
   const animationRefs = useRef<Record<string, Animated.Value>>({});
@@ -274,27 +290,35 @@ export const MusicScreen = () => {
     handleAudioSeek(-10);
   }, [handleAudioSeek]);
 
-  useEffect(() => {
-    const finishedSub = SoundPlayer.addEventListener('FinishedPlaying', () => {
-      stopAudioProgressInterval();
-      resetAudioProgress();
-      setIsAudioPlaying(false);
-      setCurrentAudioId(null);
-    });
-
-    return () => {
-      finishedSub.remove();
-      stopAudioProgressInterval();
+  /** Plays an audio directly (used for auto-play next). No toggle logic. */
+  const playAudioDirectly = useCallback(
+    (audio: Audio) => {
+      if (!audio?.audio_url) return;
       try {
+        stopAudioProgressInterval();
+        resetAudioProgress();
         SoundPlayer.stop();
-      } catch (stopError) {
-        // Ignore stop errors
+      } catch {
+        /* ignore */
       }
-    };
-  }, [stopAudioProgressInterval, resetAudioProgress]);
+      setCurrentAudioId(audio.id);
+      setSelectedAudioForSheet(audio);
+      setShowAudioSheet(true);
+      SoundPlayer.playUrl(audio.audio_url);
+      setIsAudioPlaying(true);
+      setSeekValue(0);
+      startAudioProgressTracking();
+    },
+    [stopAudioProgressInterval, resetAudioProgress, startAudioProgressTracking],
+  );
 
   const fetchAudios = useCallback(
-    async (pageNum: number = 1, append: boolean = false, categoryIdOverride?: string | null) => {
+    async (
+      pageNum: number = 1,
+      append: boolean = false,
+      categoryIdOverride?: string | null,
+      opts?: { onAppended?: (newAudios: Audio[]) => void },
+    ) => {
       if (isFetchingRef.current) {
         return;
       }
@@ -327,7 +351,6 @@ export const MusicScreen = () => {
           setLoadingMore(true);
         }
 
-        // Pass selected category (null means "All" - no filter)
         const effectiveCategoryId =
           categoryIdOverride !== undefined ? categoryIdOverride : selectedCategoryId;
         const response = await AudioService.getAudios(pageNum, 10, effectiveCategoryId);
@@ -338,6 +361,9 @@ export const MusicScreen = () => {
 
           if (append) {
             setAudios((prev) => [...prev, ...newAudios]);
+            if (opts?.onAppended) {
+              opts.onAppended(newAudios);
+            }
           } else {
             setAudios(newAudios);
           }
@@ -372,8 +398,77 @@ export const MusicScreen = () => {
   );
 
   useEffect(() => {
-    fetchCategories();
-  }, [fetchCategories]);
+    const handleFinishedPlaying = async () => {
+      const playingId = currentAudioIdRef.current;
+      stopAudioProgressInterval();
+      resetAudioProgress();
+      setIsAudioPlaying(false);
+      setCurrentAudioId(null);
+
+      if (isHandlingPlayNextRef.current || !playingId) return;
+      const list = audiosRef.current;
+      if (list.length === 0) return;
+
+      const currentIndex = list.findIndex((a) => a.id === playingId);
+      if (currentIndex < 0) return;
+
+      const nextIndex = currentIndex + 1;
+      if (nextIndex < list.length) {
+        const next = list[nextIndex];
+        isHandlingPlayNextRef.current = true;
+        playAudioDirectly(next);
+        isHandlingPlayNextRef.current = false;
+        return;
+      }
+
+      if (!hasMoreRef.current) {
+        Toast.show({
+          type: 'info',
+          text1: 'No more songs available',
+          text2: 'You have reached the end of the list.',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      if (isFetchingRef.current) return;
+      isHandlingPlayNextRef.current = true;
+
+      try {
+        await fetchAudios(pageRef.current + 1, true, undefined, {
+          onAppended: (newAudios) => {
+            if (newAudios.length > 0) {
+              playAudioDirectly(newAudios[0]);
+            } else {
+              Toast.show({
+                type: 'info',
+                text1: 'No more songs available',
+                text2: 'You have reached the end of the list.',
+                visibilityTime: 3000,
+              });
+            }
+            isHandlingPlayNextRef.current = false;
+          },
+        });
+      } finally {
+        isHandlingPlayNextRef.current = false;
+      }
+    };
+
+    const finishedSub = SoundPlayer.addEventListener('FinishedPlaying', () => {
+      handleFinishedPlaying();
+    });
+
+    return () => {
+      finishedSub.remove();
+      stopAudioProgressInterval();
+      try {
+        SoundPlayer.stop();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, [stopAudioProgressInterval, resetAudioProgress, playAudioDirectly, fetchAudios]);
 
   // Refetch audios when category filter changes
   useEffect(() => {
@@ -403,7 +498,11 @@ export const MusicScreen = () => {
     } finally {
       setLoadingCategories(false);
     }
-  }, []);
+  }, [fetchAudios]);
+
+  useEffect(() => {
+    fetchCategories();
+  }, [fetchCategories]);
 
   const handleCategorySelection = (categoryId: string | null) => {
     if (showUploadModal) {
