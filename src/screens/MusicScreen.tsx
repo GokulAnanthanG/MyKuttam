@@ -485,13 +485,17 @@ export const MusicScreen = () => {
       const response = await AudioService.getMusicCategories();
       if (response.success && response.data) {
         setCategories(response.data);
-        const myKuttamCategory = response.data.find(
-          (cat) => cat.name.toLowerCase() === 'my kuttam'
-        );
-        const defaultCategoryId = myKuttamCategory?.id ?? null;
-        setSelectedCategoryId(defaultCategoryId);
-        await fetchAudios(1, false, defaultCategoryId);
-        hasInitializedCategoryFetchRef.current = true;
+        // Set default category and initial audio fetch only once on first load.
+        // Subsequent category refreshes (create/delete) should not override user's selection.
+        if (!hasInitializedCategoryFetchRef.current) {
+          const myKuttamCategory = response.data.find(
+            (cat) => cat.name.toLowerCase() === 'my kuttam'
+          );
+          const defaultCategoryId = myKuttamCategory?.id ?? null;
+          setSelectedCategoryId(defaultCategoryId);
+          await fetchAudios(1, false, defaultCategoryId);
+          hasInitializedCategoryFetchRef.current = true;
+        }
       }
     } catch (error) {
       console.error('Failed to fetch music categories:', error);
