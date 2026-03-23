@@ -18,6 +18,7 @@ import Toast from 'react-native-toast-message';
 import { pick, types, errorCodes, isErrorWithCode } from '@react-native-documents/picker';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
+import DateTimePicker from '@react-native-community/datetimepicker';
 import { useAuth } from '../context/AuthContext';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
@@ -38,6 +39,8 @@ export const EventsScreen = () => {
   const [editingEvent, setEditingEvent] = useState<EventItem | null>(null);
   const [formTitle, setFormTitle] = useState('');
   const [formEventDate, setFormEventDate] = useState('');
+  const [selectedDate, setSelectedDate] = useState<Date>(new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [formDescription, setFormDescription] = useState('');
   const [formImage, setFormImage] = useState<{ uri: string; type: string; name: string } | null>(null);
 
@@ -95,6 +98,8 @@ export const EventsScreen = () => {
     setEditingEvent(null);
     setFormTitle('');
     setFormEventDate('');
+    setSelectedDate(new Date());
+    setShowDatePicker(false);
     setFormDescription('');
     setFormImage(null);
   };
@@ -105,12 +110,21 @@ export const EventsScreen = () => {
   };
 
   const openEditModal = (event: EventItem) => {
+    const parsedDate = event.event_date ? new Date(event.event_date) : new Date();
     setEditingEvent(event);
     setFormTitle(event.title || '');
     setFormEventDate((event.event_date || '').slice(0, 10));
+    setSelectedDate(Number.isNaN(parsedDate.getTime()) ? new Date() : parsedDate);
     setFormDescription(event.description || '');
     setFormImage(null);
     setShowEditorModal(true);
+  };
+
+  const formatDateForInput = (date: Date): string => {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   };
 
   const pickImage = async () => {
@@ -298,6 +312,7 @@ export const EventsScreen = () => {
           refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => fetchEvents(true)} />}
           renderItem={({ item }) => {
             const id = item.id || item._id || '';
+            const eventImage = item.image_url || item.image;
             return (
               <TouchableOpacity style={styles.card} onPress={() => handleOpenDetail(item)} activeOpacity={0.85}>
                 <Text style={styles.cardTitle}>{item.title}</Text>
@@ -307,7 +322,9 @@ export const EventsScreen = () => {
                     {item.description}
                   </Text>
                 )}
-                {!!item.image && <Image source={{ uri: item.image }} style={styles.cardImage} resizeMode="cover" />}
+                {!!eventImage && (
+                  <Image source={{ uri: eventImage }} style={styles.cardImage} resizeMode="cover" />
+                )}
 
                 <View style={styles.cardFooter}>
                   {loadingDetailId === id ? (
@@ -358,13 +375,30 @@ export const EventsScreen = () => {
               placeholderTextColor={colors.textMuted}
             />
             <Text style={styles.inputLabel}>Event Date * (YYYY-MM-DD)</Text>
-            <TextInput
+            <TouchableOpacity
               style={styles.input}
-              value={formEventDate}
-              onChangeText={setFormEventDate}
-              placeholder="2026-03-23"
-              placeholderTextColor={colors.textMuted}
-            />
+              activeOpacity={0.8}
+              onPress={() => setShowDatePicker(true)}>
+              <Text style={formEventDate ? styles.dateText : styles.datePlaceholder}>
+                {formEventDate || 'Select event date'}
+              </Text>
+            </TouchableOpacity>
+            {showDatePicker && (
+              <DateTimePicker
+                value={selectedDate}
+                mode="date"
+                display="default"
+                minimumDate={new Date()}
+                onChange={(event, date) => {
+                  setShowDatePicker(false);
+                  if (event.type === 'dismissed' || !date) {
+                    return;
+                  }
+                  setSelectedDate(date);
+                  setFormEventDate(formatDateForInput(date));
+                }}
+              />
+            )}
             <Text style={styles.inputLabel}>Description</Text>
             <TextInput
               style={[styles.input, styles.textArea]}
@@ -576,6 +610,16 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     color: colors.text,
     fontFamily: fonts.body,
+  },
+  dateText: {
+    color: colors.text,
+    fontFamily: fonts.body,
+    fontSize: 14,
+  },
+  datePlaceholder: {
+    color: colors.textMuted,
+    fontFamily: fonts.body,
+    fontSize: 14,
   },
   textArea: {
     minHeight: 90,

@@ -6,7 +6,15 @@ export type EventItem = {
   title: string;
   description?: string;
   image?: string;
+  image_url?: string;
   event_date: string;
+  added_by?: {
+    _id?: string;
+    name?: string;
+    phone?: string;
+    role?: string[];
+    avatar?: string;
+  };
   createdAt?: string;
   updatedAt?: string;
 };

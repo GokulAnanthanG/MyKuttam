@@ -18,6 +18,20 @@ type GiftResponse = {
   data: Gift | null;
 };
 
+type GiftsListResponse = {
+  success: boolean;
+  message: string;
+  data: {
+    gifts: Gift[];
+    pagination?: {
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
+  };
+};
+
 const getAuthHeaders = async (
   contentType: 'json' | 'form' = 'json',
 ): Promise<Record<string, string>> => {
@@ -48,6 +62,34 @@ const parseResponse = async <T>(response: Response): Promise<T> => {
 };
 
 export const GiftService = {
+  getGifts: async (params?: {
+    lucky_draw_event_id?: string;
+    page?: number;
+    limit?: number;
+  }): Promise<GiftsListResponse> => {
+    const headers = await getAuthHeaders();
+    const query = new URLSearchParams();
+    if (params?.lucky_draw_event_id) {
+      query.append('lucky_draw_event_id', params.lucky_draw_event_id);
+    }
+    if (params?.page) {
+      query.append('page', String(params.page));
+    }
+    if (params?.limit) {
+      query.append('limit', String(params.limit));
+    }
+
+    const response = await fetch(
+      `${endpoints.gifts}${query.toString() ? `?${query.toString()}` : ''}`,
+      {
+        method: 'GET',
+        headers,
+      },
+    );
+
+    return parseResponse<GiftsListResponse>(response);
+  },
+
   addGift: async (payload: {
     lucky_draw_event_id: string;
     product_name: string;

@@ -1,9 +1,11 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
   FlatList,
+  Image,
   Modal,
+  RefreshControl,
   StyleSheet,
   Text,
   TextInput,
@@ -27,6 +29,8 @@ export const GiftConfigScreen = () => {
   const { eventId, eventTitle, gifts: initialGifts = [] } = route.params || {};
 
   const [gifts, setGifts] = useState<Gift[]>(Array.isArray(initialGifts) ? initialGifts : []);
+  const [loading, setLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [deletingGiftId, setDeletingGiftId] = useState<string | null>(null);
@@ -39,6 +43,43 @@ export const GiftConfigScreen = () => {
     () => !!eventId && !!productName.trim() && !!selectedImage,
     [eventId, productName, selectedImage],
   );
+
+  const fetchGifts = useCallback(
+    async (isRefresh = false) => {
+      if (!eventId) {
+        return;
+      }
+      try {
+        if (isRefresh) {
+          setRefreshing(true);
+        } else {
+          setLoading(true);
+        }
+        const response = await GiftService.getGifts({
+          lucky_draw_event_id: eventId,
+          page: 1,
+          limit: 100,
+        });
+        if (response.success) {
+          setGifts(response.data?.gifts || []);
+        }
+      } catch (error) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: error instanceof Error ? error.message : 'Failed to fetch gifts',
+        });
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [eventId],
+  );
+
+  useEffect(() => {
+    fetchGifts();
+  }, [fetchGifts]);
 
   const resetForm = () => {
     setProductName('');
@@ -116,6 +157,7 @@ export const GiftConfigScreen = () => {
 
       setShowCreateModal(false);
       resetForm();
+      fetchGifts();
     } catch (error) {
       Toast.show({
         type: 'error',
@@ -196,10 +238,15 @@ export const GiftConfigScreen = () => {
         data={gifts}
         keyExtractor={(item, index) => item._id || item.id || `${item.product_name}-${index}`}
         contentContainerStyle={styles.listContent}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={() => fetchGifts(true)} />
+        }
         ListEmptyComponent={
           <View style={styles.emptyBox}>
             <Icon name="gift" size={36} color={colors.textMuted} />
-            <Text style={styles.emptyText}>No gifts added yet for this event</Text>
+            <Text style={styles.emptyText}>
+              {loading ? 'Loading gifts...' : 'No gifts added yet for this event'}
+            </Text>
           </View>
         }
         renderItem={({ item }) => {
@@ -210,6 +257,9 @@ export const GiftConfigScreen = () => {
               <Text style={styles.cardTitle}>{item.product_name}</Text>
               <Text style={styles.metaText}>Qty: {item.available_quantity ?? 1}</Text>
               {!!item.description && <Text style={styles.descText}>{item.description}</Text>}
+              {!!item.image && (
+                <Image source={{ uri: item.image }} style={styles.cardImage} resizeMode="cover" />
+              )}
               <TouchableOpacity
                 style={styles.deleteBtn}
                 onPress={() => handleDeleteGift(item)}
@@ -386,6 +436,13 @@ const styles = StyleSheet.create({
     borderRadius: 10,
     padding: 12,
     marginBottom: 10,
+  },
+  cardImage: {
+    width: '100%',
+    height: 150,
+    borderRadius: 8,
+    marginTop: 8,
+    backgroundColor: colors.cardMuted,
   },
   cardTitle: {
     fontFamily: fonts.heading,
