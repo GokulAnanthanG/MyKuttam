@@ -7,7 +7,7 @@ try {
 }
 
 // Always use API_BASE_URL from environment variable, no fallback
-export const BASE_URL = Config?.API_BASE_URL || '';
+export const BASE_URL = Config?.API_BASE_URL || 'https://mykuttam.xyz';
 
 export const endpoints = {
   login: `${BASE_URL}/api/registration/login`,
@@ -78,6 +78,12 @@ export const endpoints = {
   initiatePayment: `${BASE_URL}/api/payments/initiate_payment`,
   // Control params endpoints (admin only)
   controlParams: `${BASE_URL}/api/control-params`,
+  // Lucky draw endpoints
+  luckyDrawEvents: `${BASE_URL}/api/lucky-draw-events`,
+  luckyDrawEventById: (id: string) => `${BASE_URL}/api/lucky-draw-events/${id}`,
+  luckyDrawAdminDraw: `${BASE_URL}/api/lucky-draw-events/admin/draw`,
+  gifts: `${BASE_URL}/api/gifts`,
+  giftById: (id: string) => `${BASE_URL}/api/gifts/${id}`,
 };
 
 export const ENV = Config?.ENV || 'development';

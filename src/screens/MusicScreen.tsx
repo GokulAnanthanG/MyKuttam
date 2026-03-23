@@ -71,7 +71,7 @@ export const MusicScreen = () => {
   const audioProgressIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const isFetchingRef = useRef(false);
   const hasHandledInitialUrlRef = useRef(false);
-  const hasSetInitialCategoryRef = useRef(false);
+  const hasInitializedCategoryFetchRef = useRef(false);
 
   // Upload modal state
   const [showUploadModal, setShowUploadModal] = useState(false);
@@ -112,6 +112,8 @@ export const MusicScreen = () => {
   const [expandedDescriptions, setExpandedDescriptions] = useState<Set<string>>(new Set());
 
   const isAdmin = currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN'].includes(r));
+  const canUploadAudio =
+    currentUser?.role && currentUser.role.some(r => ['ADMIN', 'SUB_ADMIN', 'HELPER'].includes(r));
 
   const toggleTitleExpanded = useCallback((itemId: string) => {
     setExpandedTitles((prev) => {
@@ -292,7 +294,7 @@ export const MusicScreen = () => {
   }, [stopAudioProgressInterval, resetAudioProgress]);
 
   const fetchAudios = useCallback(
-    async (pageNum: number = 1, append: boolean = false) => {
+    async (pageNum: number = 1, append: boolean = false, categoryIdOverride?: string | null) => {
       if (isFetchingRef.current) {
         return;
       }
@@ -326,7 +328,9 @@ export const MusicScreen = () => {
         }
 
         // Pass selected category (null means "All" - no filter)
-        const response = await AudioService.getAudios(pageNum, 10, selectedCategoryId);
+        const effectiveCategoryId =
+          categoryIdOverride !== undefined ? categoryIdOverride : selectedCategoryId;
+        const response = await AudioService.getAudios(pageNum, 10, effectiveCategoryId);
 
         if (response.success && response.data) {
           const newAudios = response.data.audios || [];
@@ -368,12 +372,14 @@ export const MusicScreen = () => {
   );
 
   useEffect(() => {
-    fetchAudios(1, false);
     fetchCategories();
-  }, [fetchAudios]);
+  }, [fetchCategories]);
 
   // Refetch audios when category filter changes
   useEffect(() => {
+    if (!hasInitializedCategoryFetchRef.current) {
+      return;
+    }
     setAudios([]);
     fetchAudios(1, false);
   }, [selectedCategoryId, fetchAudios]);
@@ -384,6 +390,13 @@ export const MusicScreen = () => {
       const response = await AudioService.getMusicCategories();
       if (response.success && response.data) {
         setCategories(response.data);
+        const myKuttamCategory = response.data.find(
+          (cat) => cat.name.toLowerCase() === 'my kuttam'
+        );
+        const defaultCategoryId = myKuttamCategory?.id ?? null;
+        setSelectedCategoryId(defaultCategoryId);
+        await fetchAudios(1, false, defaultCategoryId);
+        hasInitializedCategoryFetchRef.current = true;
       }
     } catch (error) {
       console.error('Failed to fetch music categories:', error);
@@ -391,19 +404,6 @@ export const MusicScreen = () => {
       setLoadingCategories(false);
     }
   }, []);
-
-  // Set "My Kuttam" as default category only on initial page load when categories first load
-  useEffect(() => {
-    if (categories.length > 0 && !hasSetInitialCategoryRef.current) {
-      hasSetInitialCategoryRef.current = true;
-      const myKuttamCategory = categories.find(
-        (cat) => cat.name.toLowerCase() === 'my kuttam'
-      );
-      if (myKuttamCategory) {
-        setSelectedCategoryId(myKuttamCategory.id);
-      }
-    }
-  }, [categories]);
 
   const handleCategorySelection = (categoryId: string | null) => {
     if (showUploadModal) {
@@ -1156,7 +1156,7 @@ export const MusicScreen = () => {
       <View style={styles.header}>
         <View style={styles.headerTop}>
           <Text style={styles.title}>Music</Text>
-          {isAdmin && (
+          {canUploadAudio && (
             <TouchableOpacity
               style={styles.uploadButton}
               onPress={() => setShowUploadModal(true)}>

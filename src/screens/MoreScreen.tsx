@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  Alert,
   View,
   Text,
   StyleSheet,
@@ -17,6 +18,7 @@ import Toast from 'react-native-toast-message';
 import { colors } from '../theme/colors';
 import { fonts } from '../theme/typography';
 import { BASE_URL } from '../config/api';
+import { useAuth } from '../context/AuthContext';
 
 type MoreScreenNavigationProp = NativeStackNavigationProp<MoreStackParamList, 'More'>;
 
@@ -36,6 +38,113 @@ interface AppOption {
 
 export const MoreScreen = () => {
   const navigation = useNavigation<MoreScreenNavigationProp>();
+  const { currentUser } = useAuth();
+
+  const isAdminOrSubAdmin =
+    currentUser?.role && currentUser.role.some((r) => ['ADMIN', 'SUB_ADMIN'].includes(r));
+
+  const getWebBaseUrl = () => {
+    if (!BASE_URL) {
+      return null;
+    }
+    let baseUrl = BASE_URL;
+    if (baseUrl.endsWith('/api')) {
+      baseUrl = baseUrl.slice(0, -4);
+    } else if (baseUrl.includes('/api/')) {
+      baseUrl = baseUrl.replace('/api', '');
+    }
+    return baseUrl.replace(/\/$/, '');
+  };
+
+  const openLuckyDrawForUser = async () => {
+    try {
+      const baseUrl = getWebBaseUrl();
+      if (!baseUrl) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Base URL not configured',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      const userId = currentUser?.id || '';
+      const luckyDrawUrl = userId
+        ? `${baseUrl}/events?user_id=${encodeURIComponent(userId)}`
+        : `${baseUrl}/events`;
+      await Linking.openURL(luckyDrawUrl);
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to open lucky draw page',
+        visibilityTime: 3000,
+      });
+    }
+  };
+
+  const handleDrawLuckyWinner = async () => {
+    try {
+      const baseUrl = getWebBaseUrl();
+      if (!baseUrl) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'Base URL not configured',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      const userId = currentUser?.id || '';
+      if (!userId) {
+        Toast.show({
+          type: 'error',
+          text1: 'Error',
+          text2: 'User ID not found. Please login again.',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      const adminDrawUrl = `${baseUrl}/api/lucky-draw-events/admin/draw?user_id=${encodeURIComponent(userId)}`;
+      navigation.navigate('AdminDrawWebView', { url: adminDrawUrl });
+    } catch (error) {
+      Toast.show({
+        type: 'error',
+        text1: 'Error',
+        text2: error instanceof Error ? error.message : 'Failed to open draw lucky winner page',
+        visibilityTime: 3000,
+      });
+    }
+  };
+
+  const handleGiftPress = () => {
+    if (!isAdminOrSubAdmin) {
+      openLuckyDrawForUser();
+      return;
+    }
+
+    Alert.alert('Gift', 'Choose an option', [
+      {
+        text: 'Normal User Lucky Draw',
+        onPress: () => openLuckyDrawForUser(),
+      },
+      {
+        text: 'Lucky Draw Configurations',
+        onPress: () => navigation.navigate('LuckyDrawConfig'),
+      },
+      {
+        text: 'Draw Lucky Winner',
+        onPress: () => handleDrawLuckyWinner(),
+      },
+      {
+        text: 'Cancel',
+        style: 'cancel',
+      },
+    ]);
+  };
 
   const appOptions: AppOption[] = [
     {
@@ -62,7 +171,7 @@ export const MoreScreen = () => {
     {
       id: 'events',
       title: 'Events',
-      icon: 'gift',
+      icon: 'calendar',
       iconColor: '#FFFFFF',
       backgroundColor: '#FFE66D', // Yellow
       onPress: async () => {
@@ -99,6 +208,14 @@ export const MoreScreen = () => {
           });
         }
       },
+    },
+    {
+      id: 'gift',
+      title: 'Gift',
+      icon: 'gift',
+      iconColor: '#FFFFFF',
+      backgroundColor: '#A66CFF',
+      onPress: handleGiftPress,
     },
   ];
 

@@ -134,17 +134,37 @@ export const RSSScreen = () => {
 
   const handleOpenLink = async (link: string) => {
     try {
-      const canOpen = await Linking.canOpenURL(link);
-      if (canOpen) {
-        await Linking.openURL(link);
-      } else {
+      // RSS CDATA values may include leading/trailing whitespace/newlines.
+      let normalizedLink = (link || '').trim();
+      if (!normalizedLink) {
         Toast.show({
           type: 'error',
           text1: 'Error',
           text2: 'Cannot open this link.',
           visibilityTime: 3000,
         });
+        return;
       }
+
+      // Ensure protocol exists; some feeds may provide plain domains.
+      if (!/^https?:\/\//i.test(normalizedLink)) {
+        normalizedLink = `https://${normalizedLink}`;
+      }
+
+      try {
+        new URL(normalizedLink);
+      } catch {
+        Toast.show({
+          type: 'error',
+          text1: 'Invalid URL',
+          text2: 'Cannot open this link.',
+          visibilityTime: 3000,
+        });
+        return;
+      }
+
+      // Open directly; canOpenURL can return false for otherwise valid URLs in some cases.
+      await Linking.openURL(normalizedLink);
     } catch (error) {
       Toast.show({
         type: 'error',

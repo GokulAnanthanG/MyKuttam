@@ -92,6 +92,19 @@ function handleDeepLink(url: string): void {
     return;
   }
 
+  // Parse more deep link: mykuttam://more
+  const moreMatch = url.match(/mykuttam:\/\/more(?:\/)?(?:\?.*)?(?:#.*)?$/i);
+  if (moreMatch) {
+    try {
+      (navigationRef as any).navigate('MainTabs', {
+        screen: 'More',
+      });
+    } catch (error) {
+      console.error('Failed to navigate to more:', error);
+    }
+    return;
+  }
+
   // Parse subcategory deep link: mykuttam://subcategory/:categoryId/:subcategoryId
   const subcategoryMatch = url.match(/mykuttam:\/\/subcategory\/([^/]+)\/([^/]+)/);
   if (subcategoryMatch && subcategoryMatch[1] && subcategoryMatch[2]) {
