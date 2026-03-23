@@ -6,11 +6,13 @@ import { ExploreDetailScreen } from '../screens/ExploreDetailScreen';
 import { LuckyDrawConfigScreen } from '../screens/LuckyDrawConfigScreen';
 import { GiftConfigScreen } from '../screens/GiftConfigScreen';
 import { AdminDrawWebViewScreen } from '../screens/AdminDrawWebViewScreen';
+import { EventsScreen } from '../screens/EventsScreen';
 
 export type MoreStackParamList = {
   More: undefined;
   RSS: undefined;
   Explore: undefined;
+  Events: undefined;
   ExploreDetail: { title: string };
   LuckyDrawConfig: undefined;
   GiftConfig: { eventId: string; eventTitle?: string; gifts?: any[] };
@@ -29,6 +31,7 @@ export const MoreNavigator = () => {
       <Stack.Screen name="More" component={MoreScreen} />
       <Stack.Screen name="RSS" component={RSSScreen} />
       <Stack.Screen name="Explore" component={ExploreScreen} />
+      <Stack.Screen name="Events" component={EventsScreen} />
       <Stack.Screen name="ExploreDetail" component={ExploreDetailScreen} />
       <Stack.Screen name="LuckyDrawConfig" component={LuckyDrawConfigScreen} />
       <Stack.Screen name="GiftConfig" component={GiftConfigScreen} />

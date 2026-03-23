@@ -84,6 +84,9 @@ export const endpoints = {
   luckyDrawAdminDraw: `${BASE_URL}/api/lucky-draw-events/admin/draw`,
   gifts: `${BASE_URL}/api/gifts`,
   giftById: (id: string) => `${BASE_URL}/api/gifts/${id}`,
+  // Events endpoints
+  events: `${BASE_URL}/api/events`,
+  eventById: (id: string) => `${BASE_URL}/api/events/${id}`,
 };
 
 export const ENV = Config?.ENV || 'development';

@@ -174,40 +174,7 @@ export const MoreScreen = () => {
       icon: 'calendar',
       iconColor: '#FFFFFF',
       backgroundColor: '#FFE66D', // Yellow
-      onPress: async () => {
-        try {
-          if (!BASE_URL) {
-            Toast.show({
-              type: 'error',
-              text1: 'Error',
-              text2: 'Base URL not configured',
-              visibilityTime: 3000,
-            });
-            return;
-          }
-
-          // Remove /api from BASE_URL if present (web endpoint is at root level)
-          let baseUrl = BASE_URL;
-          if (baseUrl.endsWith('/api')) {
-            baseUrl = baseUrl.slice(0, -4);
-          } else if (baseUrl.includes('/api/')) {
-            baseUrl = baseUrl.replace('/api', '');
-          }
-
-          // Ensure no trailing slash
-          baseUrl = baseUrl.replace(/\/$/, '');
-
-          const eventsUrl = `${baseUrl}/events`;
-          await Linking.openURL(eventsUrl);
-        } catch (error) {
-          Toast.show({
-            type: 'error',
-            text1: 'Error',
-            text2: error instanceof Error ? error.message : 'Failed to open events page',
-            visibilityTime: 3000,
-          });
-        }
-      },
+      onPress: () => navigation.navigate('Events'),
     },
     {
       id: 'gift',
